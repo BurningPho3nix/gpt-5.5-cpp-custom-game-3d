@@ -150,6 +150,7 @@ Mat4 operator*(const Mat4 &a, const Mat4 &b)
 struct Vertex {
     Vec3 position;
     Vec3 color;
+    Vec3 normal;
 };
 
 struct WorldBox {
@@ -159,10 +160,24 @@ struct WorldBox {
     bool shootable = true;
 };
 
+struct Animal {
+    Vec3 position;
+    float yaw = 0.0f;
+    float targetYaw = 0.0f;
+    float scale = 1.0f;
+    int kind = 0;
+    float phase = 0.0f;
+    float speed = 1.0f;
+    float turnTimer = 0.0f;
+};
+
 struct BulletMark {
     Vec3 position;
     Vec3 normal;
     float age = 0.0f;
+    int animalIndex = -1;
+    Vec3 animalLocalPosition;
+    Vec3 animalLocalNormal;
 };
 
 struct FlyingBullet {
@@ -172,6 +187,9 @@ struct FlyingBullet {
     float distance = 0.0f;
     float traveled = 0.0f;
     bool willHit = false;
+    int animalIndex = -1;
+    Vec3 animalLocalPosition;
+    Vec3 animalLocalNormal;
 };
 
 struct SurfaceHit {
@@ -179,6 +197,9 @@ struct SurfaceHit {
     Vec3 normal;
     float distance = 0.0f;
     bool hit = false;
+    int animalIndex = -1;
+    Vec3 animalLocalPosition;
+    Vec3 animalLocalNormal;
 };
 
 float terrainNoise(float x, float z)
@@ -261,7 +282,7 @@ public:
         if (movement.lengthSquared() > 0.0001f) {
             movement = movement.normalized();
             const float speed = (sprinting ? 14.0f : 8.5f) * (1.0f - crouchAmount * 0.42f) * (1.0f - scopeAmount * 0.28f);
-            position += movement * speed * deltaSeconds;
+            moveWithCollision(movement * speed * deltaSeconds);
         }
 
         position.x = clamp(position.x, -WorldHalfSize + 2.0f, WorldHalfSize - 2.0f);
@@ -296,6 +317,8 @@ public:
             verticalVelocity = std::min(0.0f, verticalVelocity);
         }
 
+        worldTime += deltaSeconds;
+        updateAnimals(deltaSeconds);
         shotFlash = std::max(0.0f, shotFlash - deltaSeconds * 5.0f);
         for (BulletMark &mark : bulletMarks) {
             mark.age += deltaSeconds;
@@ -306,7 +329,12 @@ public:
             bullet->traveled += bulletSpeed * deltaSeconds;
             if (bullet->traveled >= bullet->distance) {
                 if (bullet->willHit) {
-                    bulletMarks.push_back({bullet->target, bullet->normal, 0.0f});
+                    bulletMarks.push_back({bullet->target,
+                                           bullet->normal,
+                                           0.0f,
+                                           bullet->animalIndex,
+                                           bullet->animalLocalPosition,
+                                           bullet->animalLocalNormal});
                     if (bulletMarks.size() > 120) {
                         bulletMarks.erase(bulletMarks.begin());
                     }
@@ -413,13 +441,16 @@ public:
         SDL_SetWindowTitle(window, title.c_str());
     }
 
+    Vec3 cameraPosition() const { return position; }
+    float getWorldTime() const { return worldTime; }
+
     void buildWorldMeshes(std::vector<Vertex> &triangles, std::vector<Vertex> &lines) const
     {
         triangles.clear();
         lines.clear();
-        addSky(triangles);
         addGround(triangles, lines);
         addNature(triangles, lines);
+        addAnimals(triangles, lines);
         addWorldGeometry(triangles, lines);
         if (pitch < -12.0f) {
             addPlayerModel(triangles, position, yaw, pitch, crouchAmount, false, true);
@@ -432,13 +463,12 @@ public:
     {
         triangles.clear();
         lines.clear();
-        addSky(triangles);
         addGround(triangles, lines);
         addNature(triangles, lines);
+        addAnimals(triangles, lines);
         addWorldGeometry(triangles, lines);
         addPlayerModel(triangles, position, yaw, pitch, crouchAmount, true, true);
         addFlyingBullets(triangles, lines);
-        addBulletMarks(triangles);
     }
 
     void buildMirrorMeshes(std::vector<Vertex> &triangles, std::vector<Vertex> &lines) const
@@ -494,6 +524,7 @@ public:
 
 private:
     std::vector<WorldBox> worldBoxes;
+    std::vector<Animal> animals;
     std::vector<FlyingBullet> flyingBullets;
     std::vector<BulletMark> bulletMarks;
     Vec3 position{0.0f, 1.7f, 74.0f};
@@ -504,6 +535,7 @@ private:
     float fpsTimer = 0.0f;
     float currentFps = 0.0f;
     float walkCycle = 0.0f;
+    float worldTime = 0.0f;
     float crouchAmount = 0.0f;
     float scopeAmount = 0.0f;
     int totalShots = 0;
@@ -520,28 +552,73 @@ private:
             worldBoxes.push_back({{x, y, z}, {sx, sy, sz}, color, true});
         };
 
-        addBox(0.0f, 7.5f, -96.0f, 78.0f, 15.0f, 3.0f, {0.54f, 0.58f, 0.63f});
-        addBox(-54.0f, 5.5f, -56.0f, 28.0f, 11.0f, 26.0f, {0.44f, 0.52f, 0.56f});
-        addBox(54.0f, 8.0f, -46.0f, 25.0f, 16.0f, 25.0f, {0.58f, 0.49f, 0.45f});
-        addBox(0.0f, 3.0f, -28.0f, 34.0f, 6.0f, 22.0f, {0.38f, 0.46f, 0.50f});
-        addBox(-28.0f, 9.0f, -14.0f, 10.0f, 18.0f, 10.0f, {0.69f, 0.61f, 0.49f});
-        addBox(28.0f, 12.0f, -10.0f, 9.0f, 24.0f, 9.0f, {0.43f, 0.50f, 0.66f});
-        addBox(0.0f, 0.6f, 18.0f, 56.0f, 1.2f, 20.0f, {0.31f, 0.41f, 0.39f});
-        addBox(-78.0f, 3.0f, 12.0f, 20.0f, 6.0f, 48.0f, {0.48f, 0.54f, 0.47f});
-        addBox(82.0f, 4.0f, 22.0f, 22.0f, 8.0f, 42.0f, {0.51f, 0.45f, 0.56f});
+        addBox(0.0f, 7.5f, -96.0f, 78.0f, 15.0f, 3.0f, {0.62f, 0.60f, 0.56f});  // long wall — warm concrete
+        addBox(-54.0f, 5.5f, -56.0f, 28.0f, 11.0f, 26.0f, {0.52f, 0.50f, 0.48f}); // left building — grey stone
+        addBox(54.0f, 8.0f, -46.0f, 25.0f, 16.0f, 25.0f, {0.58f, 0.46f, 0.38f});  // right building — sandstone
+        addBox(0.0f, 3.0f, -28.0f, 34.0f, 6.0f, 22.0f, {0.45f, 0.43f, 0.42f});    // central platform — dark concrete
+        addBox(-28.0f, 9.0f, -14.0f, 10.0f, 18.0f, 10.0f, {0.68f, 0.56f, 0.40f}); // left tower — warm brick
+        addBox(28.0f, 12.0f, -10.0f, 9.0f, 24.0f, 9.0f, {0.44f, 0.48f, 0.58f});   // right tower — blue-grey
+        addBox(0.0f, 0.6f, 18.0f, 56.0f, 1.2f, 20.0f, {0.38f, 0.40f, 0.38f});     // ground slab — mossy stone
+        addBox(-78.0f, 3.0f, 12.0f, 20.0f, 6.0f, 48.0f, {0.50f, 0.52f, 0.46f});   // left bunker — olive concrete
+        addBox(82.0f, 4.0f, 22.0f, 22.0f, 8.0f, 42.0f, {0.54f, 0.48f, 0.52f});    // right bunker — mauve stone
         for (int i = 0; i < 9; ++i) {
-            addBox(-14.0f + i * 3.5f, 0.35f + i * 0.45f, 48.0f - i * 4.0f, 6.0f, 0.7f + i * 0.25f, 4.0f, {0.57f, 0.52f, 0.42f});
+            addBox(-14.0f + i * 3.5f, 0.35f + i * 0.45f, 48.0f - i * 4.0f, 6.0f, 0.7f + i * 0.25f, 4.0f, {0.60f, 0.52f, 0.40f});
         }
         for (int i = 0; i < 12; ++i) {
-            addBox(-45.0f, 0.3f + i * 0.55f, 50.0f - i * 4.2f, 16.0f, 0.6f + i * 0.22f, 3.8f, {0.46f, 0.57f, 0.51f});
+            addBox(-45.0f, 0.3f + i * 0.55f, 50.0f - i * 4.2f, 16.0f, 0.6f + i * 0.22f, 3.8f, {0.48f, 0.54f, 0.48f});
         }
         for (int i = 0; i < 10; ++i) {
-            addBox(46.0f, 0.35f + i * 0.75f, 42.0f - i * 4.0f, 14.0f, 0.7f + i * 0.28f, 3.6f, {0.56f, 0.47f, 0.49f});
+            addBox(46.0f, 0.35f + i * 0.75f, 42.0f - i * 4.0f, 14.0f, 0.7f + i * 0.28f, 3.6f, {0.56f, 0.50f, 0.46f});
         }
-        addBox(-118.0f, 5.0f, 0.0f, 4.0f, 10.0f, 220.0f, {0.33f, 0.38f, 0.45f});
-        addBox(118.0f, 5.0f, 0.0f, 4.0f, 10.0f, 220.0f, {0.33f, 0.38f, 0.45f});
-        addBox(0.0f, 5.0f, -118.0f, 220.0f, 10.0f, 4.0f, {0.33f, 0.38f, 0.45f});
-        addBox(0.0f, 5.0f, 118.0f, 220.0f, 10.0f, 4.0f, {0.33f, 0.38f, 0.45f});
+        addBox(-118.0f, 5.0f, 0.0f, 4.0f, 10.0f, 220.0f, {0.38f, 0.36f, 0.34f});  // boundary walls — dark stone
+        addBox(118.0f, 5.0f, 0.0f, 4.0f, 10.0f, 220.0f, {0.38f, 0.36f, 0.34f});
+        addBox(0.0f, 5.0f, -118.0f, 220.0f, 10.0f, 4.0f, {0.38f, 0.36f, 0.34f});
+        addBox(0.0f, 5.0f, 118.0f, 220.0f, 10.0f, 4.0f, {0.38f, 0.36f, 0.34f});
+
+        auto addAnimal = [&](float x, float z, int kind, float scale, float phase, float speed) {
+            const float initialYaw = phase / Pi * 180.0f;
+            animals.push_back({{x, terrainHeightAt(x, z) + 0.04f, z},
+                               initialYaw,
+                               initialYaw,
+                               scale,
+                               kind,
+                               phase,
+                               speed,
+                               0.4f + phase});
+        };
+
+        addAnimal(-18.0f, 62.0f, 0, 1.02f, 0.30f, 0.55f);
+        addAnimal(20.0f, 44.0f, 1, 0.92f, 2.10f, 0.45f);
+        addAnimal(-9.0f, 34.0f, 2, 0.56f, 4.00f, 0.75f);
+
+        int addedAnimals = 0;
+        for (int i = 0; i < 70 && addedAnimals < 18; ++i) {
+            const float x = -112.0f + deterministic01(i * 71 + 13) * 224.0f;
+            const float z = -108.0f + deterministic01(i * 83 + 27) * 216.0f;
+            if ((std::abs(x) < 28.0f && z > 34.0f && z < 82.0f) || std::abs(z - MirrorZ) < 9.0f) {
+                continue;
+            }
+
+            bool nearStructure = false;
+            for (const WorldBox &box : worldBoxes) {
+                if (circleOverlapsAabb(x, z, 4.8f, box.center, box.size)) {
+                    nearStructure = true;
+                    break;
+                }
+            }
+            if (nearStructure) {
+                continue;
+            }
+
+            const int kind = addedAnimals % 3;
+            const float scale = kind == 0
+                ? 0.92f + deterministic01(i * 19 + 2) * 0.22f
+                : kind == 1
+                    ? 0.76f + deterministic01(i * 23 + 5) * 0.22f
+                    : 0.48f + deterministic01(i * 29 + 7) * 0.16f;
+            addAnimal(x, z, kind, scale, deterministic01(i * 37 + 11) * Pi * 2.0f, 0.30f + deterministic01(i * 43 + 17) * 0.35f);
+            ++addedAnimals;
+        }
     }
 
     void reset()
@@ -611,6 +688,168 @@ private:
         return height;
     }
 
+    static bool circleOverlapsAabb(float circleX, float circleZ, float radius, const Vec3 &center, const Vec3 &size)
+    {
+        const float minX = center.x - size.x * 0.5f;
+        const float maxX = center.x + size.x * 0.5f;
+        const float minZ = center.z - size.z * 0.5f;
+        const float maxZ = center.z + size.z * 0.5f;
+        const float closestX = clamp(circleX, minX, maxX);
+        const float closestZ = clamp(circleZ, minZ, maxZ);
+        const float dx = circleX - closestX;
+        const float dz = circleZ - closestZ;
+        return dx * dx + dz * dz < radius * radius;
+    }
+
+    bool animalPositionBlocked(float x, float z, float radius) const
+    {
+        if (std::abs(x) > WorldHalfSize - 7.0f || std::abs(z) > WorldHalfSize - 7.0f) {
+            return true;
+        }
+
+        const float mirrorGround = terrainHeightAt(0.0f, MirrorZ);
+        const Vec3 mirrorCenter{0.0f, mirrorGround + 4.1f, MirrorZ + 0.18f};
+        const Vec3 mirrorSize{27.4f, 9.4f, 0.90f};
+        if (circleOverlapsAabb(x, z, radius + 0.8f, mirrorCenter, mirrorSize)) {
+            return true;
+        }
+
+        for (const WorldBox &box : worldBoxes) {
+            if (circleOverlapsAabb(x, z, radius + 1.2f, box.center, box.size)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static float wrapDegrees(float degrees)
+    {
+        while (degrees > 180.0f) {
+            degrees -= 360.0f;
+        }
+        while (degrees < -180.0f) {
+            degrees += 360.0f;
+        }
+        return degrees;
+    }
+
+    static float yawForDirection(float dx, float dz)
+    {
+        return std::atan2(-dz, dx) / DegToRad;
+    }
+
+    void updateAnimals(float deltaSeconds)
+    {
+        for (size_t i = 0; i < animals.size(); ++i) {
+            Animal &animal = animals[i];
+            const float radius = (animal.kind == 0 ? 1.22f : animal.kind == 1 ? 1.08f : 0.52f) * animal.scale;
+            const int seedBase = int(worldTime * 100.0f) + int(i) * 997;
+
+            animal.turnTimer -= deltaSeconds;
+            if (animal.turnTimer <= 0.0f) {
+                const float turn = (deterministic01(seedBase + 11) - 0.5f) * 150.0f;
+                animal.targetYaw = wrapDegrees(animal.yaw + turn);
+                animal.turnTimer = 0.55f + deterministic01(seedBase + 23) * 2.25f;
+            }
+
+            const float edge = WorldHalfSize - 18.0f;
+            if (std::abs(animal.position.x) > edge || std::abs(animal.position.z) > edge) {
+                animal.targetYaw = yawForDirection(-animal.position.x, -animal.position.z);
+                animal.turnTimer = std::min(animal.turnTimer, 0.45f);
+            }
+
+            const float yawDelta = wrapDegrees(animal.targetYaw - animal.yaw);
+            animal.yaw = wrapDegrees(animal.yaw + clamp(yawDelta, -95.0f * deltaSeconds, 95.0f * deltaSeconds));
+
+            const float yawRad = animal.yaw * DegToRad;
+            const Vec3 direction{std::cos(yawRad), 0.0f, -std::sin(yawRad)};
+            const float moveSpeed = (animal.kind == 2 ? 1.6f : animal.kind == 1 ? 0.9f : 1.2f) * animal.speed;
+            Vec3 candidate = animal.position + direction * moveSpeed * deltaSeconds;
+
+            if (animalPositionBlocked(candidate.x, candidate.z, radius)) {
+                const float turn = 105.0f + deterministic01(seedBase + 37) * 120.0f;
+                animal.targetYaw = wrapDegrees(animal.yaw + turn);
+                animal.yaw = animal.targetYaw;
+                animal.turnTimer = 0.35f + deterministic01(seedBase + 41) * 0.8f;
+                const float newYawRad = animal.yaw * DegToRad;
+                const Vec3 newDirection{std::cos(newYawRad), 0.0f, -std::sin(newYawRad)};
+                candidate = animal.position + newDirection * moveSpeed * deltaSeconds;
+            }
+
+            if (!animalPositionBlocked(candidate.x, candidate.z, radius)) {
+                animal.position.x = clamp(candidate.x, -WorldHalfSize + 7.0f, WorldHalfSize - 7.0f);
+                animal.position.z = clamp(candidate.z, -WorldHalfSize + 7.0f, WorldHalfSize - 7.0f);
+                animal.position.y = terrainHeightAt(animal.position.x, animal.position.z) + 0.04f;
+            }
+        }
+    }
+
+    bool playerOverlapsObjectAt(float x, float z) const
+    {
+        constexpr float playerRadius = 0.62f;
+        const float playerBottom = position.y - currentEyeHeight();
+        const float playerTop = position.y + 0.18f;
+
+        auto verticalOverlap = [&](float bottom, float top) {
+            return playerTop > bottom && playerBottom < top;
+        };
+
+        const float mirrorGround = terrainHeightAt(0.0f, MirrorZ);
+        const float mirrorWidth = 26.0f;
+        const float mirrorHeight = 8.2f;
+        const Vec3 mirrorCenter{0.0f, mirrorGround + mirrorHeight * 0.5f, MirrorZ + 0.18f};
+        const Vec3 mirrorSize{mirrorWidth + 1.4f, mirrorHeight + 1.2f, 0.90f};
+        if (verticalOverlap(mirrorGround, mirrorGround + mirrorHeight + 1.0f) &&
+            circleOverlapsAabb(x, z, playerRadius, mirrorCenter, mirrorSize)) {
+            return true;
+        }
+
+        for (int i = 0; i < 34; ++i) {
+            const float treeX = -130.0f + deterministic01(i * 41 + 2) * 260.0f;
+            const float treeZ = -132.0f + deterministic01(i * 47 + 8) * 264.0f;
+            if ((std::abs(treeX) < 24.0f && treeZ > 36.0f && treeZ < 76.0f) || std::abs(treeZ - MirrorZ) < 7.0f) {
+                continue;
+            }
+            const float treeBottom = terrainHeightAt(treeX, treeZ);
+            const float trunkHeight = 1.7f + deterministic01(i * 19) * 1.6f;
+            const float dx = x - treeX;
+            const float dz = z - treeZ;
+            constexpr float treeRadius = 0.92f;
+            if (verticalOverlap(treeBottom, treeBottom + trunkHeight + 0.4f) &&
+                dx * dx + dz * dz < (playerRadius + treeRadius) * (playerRadius + treeRadius)) {
+                return true;
+            }
+        }
+
+        for (const Animal &animal : animals) {
+            const float animalHeight = (animal.kind == 2 ? 0.95f : 1.75f) * animal.scale;
+            const float animalRadius = (animal.kind == 0 ? 1.22f : animal.kind == 1 ? 1.08f : 0.52f) * animal.scale;
+            const float dx = x - animal.position.x;
+            const float dz = z - animal.position.z;
+            if (verticalOverlap(animal.position.y, animal.position.y + animalHeight) &&
+                dx * dx + dz * dz < (playerRadius + animalRadius) * (playerRadius + animalRadius)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void moveWithCollision(const Vec3 &delta)
+    {
+        Vec3 candidate = position;
+        candidate.x = clamp(candidate.x + delta.x, -WorldHalfSize + 2.0f, WorldHalfSize - 2.0f);
+        if (!playerOverlapsObjectAt(candidate.x, candidate.z)) {
+            position.x = candidate.x;
+        }
+
+        candidate = position;
+        candidate.z = clamp(candidate.z + delta.z, -WorldHalfSize + 2.0f, WorldHalfSize - 2.0f);
+        if (!playerOverlapsObjectAt(candidate.x, candidate.z)) {
+            position.z = candidate.z;
+        }
+    }
+
     static bool intersectRayBox(const Vec3 &origin, const Vec3 &direction, const WorldBox &box, float *hitDistance, Vec3 *hitNormal)
     {
         const Vec3 minCorner = box.center - box.size * 0.5f;
@@ -671,6 +910,148 @@ private:
                 best = {origin + direction * distance, normal, distance, true};
             }
         }
+
+        const float mirrorGround = terrainHeightAt(0.0f, MirrorZ);
+        const WorldBox mirrorBox{
+            {0.0f, mirrorGround + 4.1f, MirrorZ + 0.18f},
+            {27.4f, 9.4f, 0.90f},
+            {0.05f, 0.06f, 0.08f},
+            true,
+        };
+        float mirrorDistance = 0.0f;
+        Vec3 mirrorNormal;
+        if (intersectRayBox(origin, direction, mirrorBox, &mirrorDistance, &mirrorNormal) && mirrorDistance < best.distance) {
+            best = {origin + direction * mirrorDistance, mirrorNormal, mirrorDistance, true};
+        }
+
+        for (int i = 0; i < 34; ++i) {
+            const float treeX = -130.0f + deterministic01(i * 41 + 2) * 260.0f;
+            const float treeZ = -132.0f + deterministic01(i * 47 + 8) * 264.0f;
+            if ((std::abs(treeX) < 24.0f && treeZ > 36.0f && treeZ < 76.0f) || std::abs(treeZ - MirrorZ) < 7.0f) {
+                continue;
+            }
+            const float treeY = terrainHeightAt(treeX, treeZ) + 0.10f;
+            const float trunkHeight = 1.7f + deterministic01(i * 19) * 1.6f;
+            const WorldBox trunkBox{
+                {treeX, treeY + trunkHeight * 0.5f, treeZ},
+                {0.82f, trunkHeight, 0.82f},
+                {0.25f, 0.16f, 0.09f},
+                true,
+            };
+            float treeDistance = 0.0f;
+            Vec3 treeNormal;
+            if (intersectRayBox(origin, direction, trunkBox, &treeDistance, &treeNormal) && treeDistance < best.distance) {
+                best = {origin + direction * treeDistance, treeNormal, treeDistance, true};
+            }
+        }
+
+        for (size_t animalIndex = 0; animalIndex < animals.size(); ++animalIndex) {
+            const Animal &animal = animals[animalIndex];
+            const Vec3 bodyLocalCenter = animal.kind == 0
+                ? Vec3{0.0f, 0.82f, 0.0f}
+                : animal.kind == 1
+                    ? Vec3{0.0f, 0.56f, 0.0f}
+                    : Vec3{0.0f, 0.28f, 0.0f};
+            const Vec3 bodySize = animal.kind == 0
+                ? Vec3{1.70f, 0.72f, 0.58f} * animal.scale
+                : animal.kind == 1
+                    ? Vec3{1.72f, 0.72f, 0.72f} * animal.scale
+                    : Vec3{1.05f, 0.44f, 0.44f} * animal.scale;
+            const Vec3 bodyCenter = animal.position + rotateY(bodyLocalCenter * animal.scale, animal.yaw);
+            const WorldBox bodyBox{bodyCenter, bodySize, {0.55f, 0.25f, 0.16f}, true};
+
+            auto localSurfaceHit = [](const Vec3 &localHit, const Vec3 &localCenter, const Vec3 &size, Vec3 *localNormal) {
+                const Vec3 half = size * 0.5f;
+                Vec3 surface{
+                    clamp(localHit.x, localCenter.x - half.x, localCenter.x + half.x),
+                    clamp(localHit.y, localCenter.y - half.y, localCenter.y + half.y),
+                    clamp(localHit.z, localCenter.z - half.z, localCenter.z + half.z),
+                };
+                const float dxMin = std::abs(localHit.x - (localCenter.x - half.x));
+                const float dxMax = std::abs(localHit.x - (localCenter.x + half.x));
+                const float dyMin = std::abs(localHit.y - (localCenter.y - half.y));
+                const float dyMax = std::abs(localHit.y - (localCenter.y + half.y));
+                const float dzMin = std::abs(localHit.z - (localCenter.z - half.z));
+                const float dzMax = std::abs(localHit.z - (localCenter.z + half.z));
+                float bestFace = dxMin;
+                int face = 0;
+                auto testFace = [&](float distance, int candidateFace) {
+                    if (distance < bestFace) {
+                        bestFace = distance;
+                        face = candidateFace;
+                    }
+                };
+                testFace(dxMax, 1);
+                testFace(dyMin, 2);
+                testFace(dyMax, 3);
+                testFace(dzMin, 4);
+                testFace(dzMax, 5);
+                if (face == 0) {
+                    surface.x = localCenter.x - half.x;
+                    *localNormal = {-1.0f, 0.0f, 0.0f};
+                } else if (face == 1) {
+                    surface.x = localCenter.x + half.x;
+                    *localNormal = {1.0f, 0.0f, 0.0f};
+                } else if (face == 2) {
+                    surface.y = localCenter.y - half.y;
+                    *localNormal = {0.0f, -1.0f, 0.0f};
+                } else if (face == 3) {
+                    surface.y = localCenter.y + half.y;
+                    *localNormal = {0.0f, 1.0f, 0.0f};
+                } else if (face == 4) {
+                    surface.z = localCenter.z - half.z;
+                    *localNormal = {0.0f, 0.0f, -1.0f};
+                } else {
+                    surface.z = localCenter.z + half.z;
+                    *localNormal = {0.0f, 0.0f, 1.0f};
+                }
+                return surface;
+            };
+
+            float animalDistance = 0.0f;
+            Vec3 animalNormal;
+            if (intersectRayBox(origin, direction, bodyBox, &animalDistance, &animalNormal) && animalDistance < best.distance) {
+                const Vec3 hitPosition = origin + direction * animalDistance;
+                const Vec3 localHit = rotateY(hitPosition - animal.position, -animal.yaw);
+                Vec3 localNormal;
+                const Vec3 localPosition = localSurfaceHit(localHit, bodyLocalCenter * animal.scale, bodySize, &localNormal);
+                best = {hitPosition,
+                        rotateY(localNormal, animal.yaw).normalized(),
+                        animalDistance,
+                        true,
+                        static_cast<int>(animalIndex),
+                        localPosition,
+                        localNormal};
+            }
+
+            const Vec3 headLocalCenter = animal.kind == 0
+                ? Vec3{1.12f, 1.36f, -0.02f}
+                : animal.kind == 1
+                    ? Vec3{0.78f, 0.62f, 0.0f}
+                    : Vec3{0.48f, 0.48f, 0.0f};
+            const Vec3 headSize = animal.kind == 2
+                ? Vec3{0.42f, 0.36f, 0.34f} * animal.scale
+                : animal.kind == 1
+                    ? Vec3{0.62f, 0.50f, 0.48f} * animal.scale
+                    : Vec3{0.58f, 0.40f, 0.34f} * animal.scale;
+            const WorldBox headBox{animal.position + rotateY(headLocalCenter * animal.scale, animal.yaw),
+                                   headSize,
+                                   {0.55f, 0.25f, 0.16f},
+                                   true};
+            if (intersectRayBox(origin, direction, headBox, &animalDistance, &animalNormal) && animalDistance < best.distance) {
+                const Vec3 hitPosition = origin + direction * animalDistance;
+                const Vec3 localHit = rotateY(hitPosition - animal.position, -animal.yaw);
+                Vec3 localNormal;
+                const Vec3 localPosition = localSurfaceHit(localHit, headLocalCenter * animal.scale, headSize, &localNormal);
+                best = {hitPosition,
+                        rotateY(localNormal, animal.yaw).normalized(),
+                        animalDistance,
+                        true,
+                        static_cast<int>(animalIndex),
+                        localPosition,
+                        localNormal};
+            }
+        }
         return best;
     }
 
@@ -683,28 +1064,44 @@ private:
         const SurfaceHit hit = traceShot(position, direction);
         if (hit.hit) {
             const float distance = std::max(0.2f, (hit.position - start).length());
-            flyingBullets.push_back({start, hit.position, hit.normal, distance, 0.0f, true});
+            flyingBullets.push_back({start,
+                                     hit.position,
+                                     hit.normal,
+                                     distance,
+                                     0.0f,
+                                     true,
+                                     hit.animalIndex,
+                                     hit.animalLocalPosition,
+                                     hit.animalLocalNormal});
         } else {
             flyingBullets.push_back({start, start + direction * 180.0f, {0.0f, 1.0f, 0.0f}, 180.0f, 0.0f, false});
         }
     }
 
-    static void addVertex(std::vector<Vertex> &vertices, const Vec3 &position, const Vec3 &color)
+    static void addVertex(std::vector<Vertex> &vertices, const Vec3 &position, const Vec3 &color, const Vec3 &normal = {0.0f, 1.0f, 0.0f})
     {
-        vertices.push_back({position, color});
+        vertices.push_back({position, color, normal});
     }
 
     static void addTriangle(std::vector<Vertex> &triangles, const Vec3 &a, const Vec3 &b, const Vec3 &c, const Vec3 &color)
     {
-        addVertex(triangles, a, color);
-        addVertex(triangles, b, color);
-        addVertex(triangles, c, color);
+        const Vec3 normal = cross(b - a, c - a).normalized();
+        addVertex(triangles, a, color, normal);
+        addVertex(triangles, b, color, normal);
+        addVertex(triangles, c, color, normal);
+    }
+
+    static void addTriangleWithNormals(std::vector<Vertex> &triangles, const Vec3 &a, const Vec3 &b, const Vec3 &c, const Vec3 &color, const Vec3 &na, const Vec3 &nb, const Vec3 &nc)
+    {
+        addVertex(triangles, a, color, na);
+        addVertex(triangles, b, color, nb);
+        addVertex(triangles, c, color, nc);
     }
 
     static void addLine(std::vector<Vertex> &lines, const Vec3 &a, const Vec3 &b, const Vec3 &color)
     {
-        addVertex(lines, a, color);
-        addVertex(lines, b, color);
+        addVertex(lines, a, color, {0.0f, 0.0f, 0.0f});
+        addVertex(lines, b, color, {0.0f, 0.0f, 0.0f});
     }
 
     static void addLine2D(std::vector<Vertex> &lines, const Vec3 &a, const Vec3 &b, const Vec3 &color)
@@ -724,17 +1121,21 @@ private:
             {x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0},
             {x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1},
         }};
-        auto quad = [&](int a, int b, int c, int d, float shade) {
-            const Vec3 shaded = color * shade;
-            addTriangle(triangles, p[a], p[b], p[c], shaded);
-            addTriangle(triangles, p[a], p[c], p[d], shaded);
+        // Each face gets its actual outward normal — the shader does real lighting
+        auto quadN = [&](int a, int b, int c, int d, const Vec3 &normal) {
+            addVertex(triangles, p[a], color, normal);
+            addVertex(triangles, p[b], color, normal);
+            addVertex(triangles, p[c], color, normal);
+            addVertex(triangles, p[a], color, normal);
+            addVertex(triangles, p[c], color, normal);
+            addVertex(triangles, p[d], color, normal);
         };
-        quad(4, 5, 6, 7, 1.00f);
-        quad(1, 0, 3, 2, 0.72f);
-        quad(3, 7, 6, 2, 1.16f);
-        quad(0, 1, 5, 4, 0.58f);
-        quad(0, 4, 7, 3, 0.82f);
-        quad(5, 1, 2, 6, 0.90f);
+        quadN(4, 5, 6, 7, {0.0f, 0.0f, 1.0f});   // +Z face
+        quadN(1, 0, 3, 2, {0.0f, 0.0f, -1.0f});   // -Z face
+        quadN(3, 7, 6, 2, {0.0f, 1.0f, 0.0f});    // +Y face (top)
+        quadN(0, 1, 5, 4, {0.0f, -1.0f, 0.0f});   // -Y face (bottom)
+        quadN(0, 4, 7, 3, {-1.0f, 0.0f, 0.0f});   // -X face
+        quadN(5, 1, 2, 6, {1.0f, 0.0f, 0.0f});    // +X face
     }
 
     static Vec3 rotateY(const Vec3 &v, float degrees)
@@ -751,6 +1152,7 @@ private:
         addBox(local, {0.0f, 0.0f, 0.0f}, size, color);
         for (Vertex &v : local) {
             v.position = rotateY(v.position, yawDegrees) + center;
+            v.normal = rotateY(v.normal, yawDegrees);
             triangles.push_back(v);
         }
     }
@@ -787,26 +1189,108 @@ private:
                 const Vec3 b{x1, terrainHeightAt(x1, z0), z0};
                 const Vec3 c{x1, terrainHeightAt(x1, z1), z1};
                 const Vec3 d{x0, terrainHeightAt(x0, z1), z1};
+                // Per-vertex terrain normals for smooth shading
+                const Vec3 na = terrainNormalAt(x0, z0);
+                const Vec3 nb = terrainNormalAt(x1, z0);
+                const Vec3 nc = terrainNormalAt(x1, z1);
+                const Vec3 nd = terrainNormalAt(x0, z1);
                 const float lush = clamp(((a.y + b.y + c.y + d.y) * 0.25f + 1.5f) / 7.5f, 0.0f, 1.0f);
                 const float patch = deterministic01(x * 97 + z * 193);
                 const float fine = 0.5f + 0.5f * std::sin(x0 * 0.31f + z0 * 0.27f);
-                const float shade = 0.78f + patch * 0.22f + fine * 0.08f;
-                const Vec3 base{0.08f + lush * 0.10f, 0.26f + lush * 0.26f, 0.10f + lush * 0.10f};
+                const float shade = 0.82f + patch * 0.18f + fine * 0.06f;
+                // Richer, more natural terrain colors
+                const Vec3 base{0.10f + lush * 0.08f, 0.28f + lush * 0.28f, 0.08f + lush * 0.08f};
                 const Vec3 color{base.x * shade, base.y * shade, base.z * shade};
-                addTriangle(triangles, a, b, c, color);
-                addTriangle(triangles, a, c, d, color * (0.82f + patch * 0.16f));
-
-                if ((x + z) % 3 == 0) {
-                    const float inset = step * 0.22f;
-                    const float px0 = x0 + inset;
-                    const float px1 = x1 - inset;
-                    const float pz = z0 + step * (0.25f + patch * 0.5f);
-                    addLine(lines,
-                            {px0, terrainHeightAt(px0, pz) + 0.05f, pz},
-                            {px1, terrainHeightAt(px1, pz) + 0.05f, pz},
-                            {0.10f, 0.21f + lush * 0.18f, 0.09f});
-                }
+                const Vec3 color2 = color * (0.88f + patch * 0.12f);
+                addTriangleWithNormals(triangles, a, b, c, color, na, nb, nc);
+                addTriangleWithNormals(triangles, a, c, d, color2, na, nc, nd);
             }
+        }
+    }
+
+    static void addAnimalModel(std::vector<Vertex> &triangles, std::vector<Vertex> &lines, const Animal &animal, float time)
+    {
+        const float runCycle = time * animal.speed * (animal.kind == 2 ? 11.0f : 7.5f) + animal.phase;
+        const float stride = std::sin(runCycle) * (animal.kind == 2 ? 0.24f : 0.18f);
+        const float counterStride = -stride;
+        const float footLift = std::abs(std::sin(runCycle)) * (animal.kind == 2 ? 0.13f : 0.08f);
+        const float runBounce = std::abs(std::sin(runCycle)) * (animal.kind == 2 ? 0.11f : 0.035f);
+        const float bob = (std::sin(time * 1.7f + animal.phase) * 0.035f + runBounce) * animal.scale;
+        const float headBob = std::sin(time * 2.1f + animal.phase * 1.3f) * 0.05f * animal.scale;
+        const float tailWag = std::sin(time * 3.3f + animal.phase) * 0.22f;
+        const float modelYaw = animal.yaw + std::sin(time * 0.37f + animal.phase) * 3.0f;
+
+        auto tx = [&](Vec3 local) {
+            local = local * animal.scale;
+            local.y += bob;
+            return rotateY(local, modelYaw) + animal.position;
+        };
+        auto box = [&](const Vec3 &local, const Vec3 &size, const Vec3 &color) {
+            addTransformedBox(triangles, tx(local), size * animal.scale, color, modelYaw);
+        };
+        auto segment = [&](const Vec3 &a, const Vec3 &b, float thickness, const Vec3 &color) {
+            addSegmentBox(triangles, tx(a), tx(b), thickness * animal.scale, color);
+        };
+        auto line = [&](const Vec3 &a, const Vec3 &b, const Vec3 &color) {
+            addLine(lines, tx(a), tx(b), color);
+        };
+
+        if (animal.kind == 0) {
+            const Vec3 hide{0.43f, 0.25f, 0.12f};
+            const Vec3 hideDark{0.25f, 0.13f, 0.07f};
+            const Vec3 cream{0.74f, 0.60f, 0.38f};
+            box({0.0f, 0.82f, 0.0f}, {1.70f, 0.72f, 0.58f}, hide);
+            box({-0.05f, 0.56f, 0.02f}, {1.25f, 0.20f, 0.50f}, cream);
+            box({0.88f, 1.06f, -0.02f}, {0.28f, 0.72f, 0.24f}, hide);
+            box({1.12f, 1.36f + headBob, -0.02f}, {0.58f, 0.40f, 0.34f}, hide);
+            box({1.48f, 1.31f + headBob, -0.02f}, {0.28f, 0.20f, 0.24f}, hideDark);
+            box({1.10f, 1.67f + headBob, -0.18f}, {0.13f, 0.32f, 0.10f}, hide);
+            box({1.10f, 1.67f + headBob, 0.18f}, {0.13f, 0.32f, 0.10f}, hide);
+            line({1.02f, 1.66f + headBob, -0.14f}, {0.92f, 2.05f + headBob, -0.28f}, cream);
+            line({1.02f, 1.66f + headBob, 0.14f}, {0.92f, 2.05f + headBob, 0.28f}, cream);
+            line({0.95f, 1.92f + headBob, -0.24f}, {0.72f, 2.08f + headBob, -0.40f}, cream);
+            line({0.95f, 1.92f + headBob, 0.24f}, {0.72f, 2.08f + headBob, 0.40f}, cream);
+            for (float side : std::array{-1.0f, 1.0f}) {
+                segment({-0.58f, 0.48f, side * 0.20f}, {-0.68f + counterStride, 0.08f + footLift, side * 0.22f}, 0.13f, hideDark);
+                segment({0.52f, 0.48f, side * 0.20f}, {0.60f + stride, 0.08f + footLift, side * 0.22f}, 0.13f, hideDark);
+            }
+            segment({-0.95f, 0.90f, 0.0f}, {-1.22f, 0.98f + tailWag * 0.08f, 0.0f}, 0.12f, cream);
+        } else if (animal.kind == 1) {
+            const Vec3 fur{0.26f, 0.19f, 0.14f};
+            const Vec3 furDark{0.13f, 0.10f, 0.08f};
+            const Vec3 tusk{0.86f, 0.80f, 0.62f};
+            box({0.0f, 0.56f, 0.0f}, {1.72f, 0.72f, 0.72f}, fur);
+            box({0.78f, 0.62f + headBob * 0.4f, 0.0f}, {0.62f, 0.50f, 0.48f}, fur);
+            box({1.17f, 0.52f + headBob * 0.4f, 0.0f}, {0.30f, 0.22f, 0.34f}, furDark);
+            box({0.60f, 0.98f + headBob * 0.4f, -0.24f}, {0.14f, 0.22f, 0.10f}, furDark);
+            box({0.60f, 0.98f + headBob * 0.4f, 0.24f}, {0.14f, 0.22f, 0.10f}, furDark);
+            line({1.22f, 0.45f, -0.14f}, {1.42f, 0.54f, -0.28f}, tusk);
+            line({1.22f, 0.45f, 0.14f}, {1.42f, 0.54f, 0.28f}, tusk);
+            for (float side : std::array{-1.0f, 1.0f}) {
+                segment({-0.54f, 0.28f, side * 0.24f}, {-0.56f + counterStride * 0.75f, 0.04f + footLift * 0.65f, side * 0.24f}, 0.12f, furDark);
+                segment({0.46f, 0.28f, side * 0.24f}, {0.48f + stride * 0.75f, 0.04f + footLift * 0.65f, side * 0.24f}, 0.12f, furDark);
+            }
+            line({-0.92f, 0.68f, 0.0f}, {-1.12f, 0.72f + tailWag * 0.08f, 0.0f}, furDark);
+        } else {
+            const Vec3 fur{0.62f, 0.53f, 0.42f};
+            const Vec3 furDark{0.36f, 0.29f, 0.23f};
+            const Vec3 white{0.84f, 0.78f, 0.68f};
+            box({0.0f, 0.28f, 0.0f}, {1.05f, 0.44f, 0.44f}, fur);
+            box({0.48f, 0.48f + headBob, 0.0f}, {0.42f, 0.36f, 0.34f}, fur);
+            box({0.52f, 0.87f + headBob, -0.12f}, {0.12f, 0.52f, 0.08f}, fur);
+            box({0.52f, 0.87f + headBob, 0.12f}, {0.12f, 0.52f, 0.08f}, fur);
+            box({-0.58f, 0.38f, 0.0f}, {0.25f, 0.25f, 0.25f}, white);
+            for (float side : std::array{-1.0f, 1.0f}) {
+                segment({-0.24f, 0.10f, side * 0.12f}, {-0.42f + counterStride, 0.02f + footLift, side * 0.16f}, 0.08f, furDark);
+                segment({0.28f, 0.10f, side * 0.12f}, {0.44f + stride, 0.02f + footLift, side * 0.16f}, 0.08f, furDark);
+            }
+        }
+    }
+
+    void addAnimals(std::vector<Vertex> &triangles, std::vector<Vertex> &lines) const
+    {
+        for (const Animal &animal : animals) {
+            addAnimalModel(triangles, lines, animal, worldTime);
         }
     }
 
@@ -821,7 +1305,11 @@ private:
             const float y = terrainHeightAt(x, z) + 0.14f;
             const float blade = 0.34f + deterministic01(i * 31 + 9) * 0.48f;
             const float sway = (deterministic01(i * 13 + 3) - 0.5f) * 0.22f;
-            addLine(lines, {x, y, z}, {x + sway, y + blade, z + sway * 0.45f}, {0.18f + deterministic01(i) * 0.10f, 0.48f + deterministic01(i + 7) * 0.22f, 0.18f});
+            // Richer grass blade colors — more varied greens and yellowy-greens
+            const float gr = 0.15f + deterministic01(i) * 0.12f;
+            const float gg = 0.42f + deterministic01(i + 7) * 0.28f;
+            const float gb = 0.12f + deterministic01(i + 3) * 0.08f;
+            addLine(lines, {x, y, z}, {x + sway, y + blade, z + sway * 0.45f}, {gr, gg, gb});
         }
 
         for (int i = 0; i < 34; ++i) {
@@ -832,10 +1320,14 @@ private:
             }
             const float y = terrainHeightAt(x, z) + 0.10f;
             const float trunkHeight = 1.7f + deterministic01(i * 19) * 1.6f;
-            addBox(triangles, {x, y + trunkHeight * 0.5f, z}, {0.55f, trunkHeight, 0.55f}, {0.25f, 0.16f, 0.09f});
-            addBox(triangles, {x, y + 0.08f, z}, {1.10f, 0.16f, 1.10f}, {0.18f, 0.11f, 0.06f});
-            addBox(triangles, {x, y + trunkHeight + 0.75f, z}, {3.0f, 1.6f, 3.0f}, {0.10f, 0.34f + deterministic01(i + 3) * 0.16f, 0.15f});
-            addBox(triangles, {x, y + trunkHeight + 1.65f, z}, {2.1f, 1.3f, 2.1f}, {0.08f, 0.28f, 0.13f});
+            // Warmer, richer trunk brown
+            addBox(triangles, {x, y + trunkHeight * 0.5f, z}, {0.55f, trunkHeight, 0.55f}, {0.34f, 0.22f, 0.12f});
+            // Root flare — darker
+            addBox(triangles, {x, y + 0.08f, z}, {1.10f, 0.16f, 1.10f}, {0.24f, 0.15f, 0.08f});
+            // Foliage — richer, more varied greens
+            const float foliageVariation = deterministic01(i + 3) * 0.18f;
+            addBox(triangles, {x, y + trunkHeight + 0.75f, z}, {3.0f, 1.6f, 3.0f}, {0.08f + foliageVariation * 0.3f, 0.32f + foliageVariation, 0.10f + foliageVariation * 0.2f});
+            addBox(triangles, {x, y + trunkHeight + 1.65f, z}, {2.1f, 1.3f, 2.1f}, {0.06f, 0.26f + foliageVariation * 0.5f, 0.09f});
         }
 
         for (int i = 0; i < 46; ++i) {
@@ -843,7 +1335,9 @@ private:
             const float z = -140.0f + deterministic01(i * 59 + 4) * 280.0f;
             const float y = terrainHeightAt(x, z) + 0.18f;
             const float scale = 0.45f + deterministic01(i * 23) * 1.25f;
-            addBox(triangles, {x, y, z}, {scale * 1.4f, scale * 0.55f, scale}, {0.28f, 0.30f, 0.28f});
+            // Rocks with subtle warm/cool color variation
+            const float rockTone = deterministic01(i * 31 + 5) * 0.08f;
+            addBox(triangles, {x, y, z}, {scale * 1.4f, scale * 0.55f, scale}, {0.32f + rockTone, 0.30f + rockTone * 0.5f, 0.28f - rockTone * 0.5f});
         }
     }
 
@@ -995,15 +1489,77 @@ private:
         const Vec3 b = p + tangent * size - bitangent * size;
         const Vec3 c = p + tangent * size + bitangent * size;
         const Vec3 d = p - tangent * size + bitangent * size;
-        addTriangle(triangles, a, b, c, color);
-        addTriangle(triangles, a, c, d, color);
+        addVertex(triangles, a, color, normal);
+        addVertex(triangles, b, color, normal);
+        addVertex(triangles, c, color, normal);
+        addVertex(triangles, a, color, normal);
+        addVertex(triangles, c, color, normal);
+        addVertex(triangles, d, color, normal);
+    }
+
+    static void addBasisBox(std::vector<Vertex> &triangles, const Vec3 &center, const Vec3 &xAxis, const Vec3 &yAxis, const Vec3 &zAxis, const Vec3 &size, const Vec3 &color)
+    {
+        const Vec3 hx = xAxis * (size.x * 0.5f);
+        const Vec3 hy = yAxis * (size.y * 0.5f);
+        const Vec3 hz = zAxis * (size.z * 0.5f);
+        const std::array<Vec3, 8> p = {{
+            center - hx - hy - hz,
+            center + hx - hy - hz,
+            center + hx + hy - hz,
+            center - hx + hy - hz,
+            center - hx - hy + hz,
+            center + hx - hy + hz,
+            center + hx + hy + hz,
+            center - hx + hy + hz,
+        }};
+        auto quadN = [&](int a, int b, int c, int d, const Vec3 &normal) {
+            addVertex(triangles, p[a], color, normal);
+            addVertex(triangles, p[b], color, normal);
+            addVertex(triangles, p[c], color, normal);
+            addVertex(triangles, p[a], color, normal);
+            addVertex(triangles, p[c], color, normal);
+            addVertex(triangles, p[d], color, normal);
+        };
+        quadN(4, 5, 6, 7, zAxis);      // +Z face
+        quadN(1, 0, 3, 2, -zAxis);     // -Z face
+        quadN(3, 7, 6, 2, yAxis);      // +Y face
+        quadN(0, 1, 5, 4, -yAxis);     // -Y face
+        quadN(0, 4, 7, 3, -xAxis);     // -X face
+        quadN(5, 1, 2, 6, xAxis);      // +X face
+    }
+
+    static void addAnimalImpact(std::vector<Vertex> &triangles, const Vec3 &position, const Vec3 &normal, float glow)
+    {
+        const Vec3 surfaceNormal = normal.normalized();
+        Vec3 tangent = cross(surfaceNormal, {0.0f, 1.0f, 0.0f});
+        if (tangent.lengthSquared() < 0.01f) {
+            tangent = cross(surfaceNormal, {1.0f, 0.0f, 0.0f});
+        }
+        tangent = tangent.normalized();
+        const Vec3 bitangent = cross(surfaceNormal, tangent).normalized();
+        const Vec3 darkBlood{0.18f + glow * 0.22f, 0.015f, 0.01f};
+        const Vec3 freshBlood{0.42f + glow * 0.35f, 0.025f + glow * 0.04f, 0.015f};
+        const Vec3 embedded = position - surfaceNormal * 0.014f;
+
+        addBasisBox(triangles, embedded, tangent, bitangent, surfaceNormal, {0.24f, 0.14f, 0.026f}, darkBlood);
+        addBasisBox(triangles, embedded + tangent * 0.06f + bitangent * 0.02f, tangent, bitangent, surfaceNormal, {0.11f, 0.07f, 0.020f}, freshBlood);
+        addBasisBox(triangles, embedded - tangent * 0.07f - bitangent * 0.03f, tangent, bitangent, surfaceNormal, {0.08f, 0.055f, 0.018f}, darkBlood * 0.72f);
     }
 
     void addBulletMarks(std::vector<Vertex> &triangles) const
     {
         for (const BulletMark &mark : bulletMarks) {
             const float glow = clamp(1.0f - mark.age * 2.2f, 0.0f, 1.0f);
-            addDecalQuad(triangles, mark.position, mark.normal, 0.20f, {0.08f + glow * 0.92f, 0.02f + glow * 0.22f, 0.015f});
+            Vec3 position = mark.position;
+            Vec3 normal = mark.normal;
+            if (mark.animalIndex >= 0 && mark.animalIndex < static_cast<int>(animals.size())) {
+                const Animal &animal = animals[static_cast<size_t>(mark.animalIndex)];
+                position = animal.position + rotateY(mark.animalLocalPosition, animal.yaw);
+                normal = rotateY(mark.animalLocalNormal, animal.yaw).normalized();
+                addAnimalImpact(triangles, position, normal, glow);
+                continue;
+            }
+            addDecalQuad(triangles, position, normal, 0.20f, {0.08f + glow * 0.92f, 0.02f + glow * 0.22f, 0.015f});
         }
     }
 };
@@ -1025,22 +1581,86 @@ const char *VertexShader = R"(
 #version 450
 layout(push_constant) uniform PushConstants {
     mat4 mvp;
+    vec4 cameraPos;   // xyz = camera position, w = unused
+    vec4 fogColor;    // xyz = fog/sky color, w = worldTime
 } pc;
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inColor;
+layout(location = 2) in vec3 inNormal;
 layout(location = 0) out vec3 fragColor;
+layout(location = 1) out vec3 fragWorldPos;
+layout(location = 2) out vec3 fragNormal;
 void main() {
     gl_Position = pc.mvp * vec4(inPosition, 1.0);
     fragColor = inColor;
+    fragWorldPos = inPosition;
+    fragNormal = inNormal;
 }
 )";
 
 const char *FragmentShader = R"(
 #version 450
+layout(push_constant) uniform PushConstants {
+    mat4 mvp;
+    vec4 cameraPos;
+    vec4 fogColor;
+} pc;
 layout(location = 0) in vec3 fragColor;
+layout(location = 1) in vec3 fragWorldPos;
+layout(location = 2) in vec3 fragNormal;
 layout(location = 0) out vec4 outColor;
 void main() {
-    outColor = vec4(fragColor, 1.0);
+    vec3 N = fragNormal;
+    float normalLen = length(N);
+
+    // If normal is zero-length (lines, overlay), pass color through without lighting
+    if (normalLen < 0.01) {
+        outColor = vec4(fragColor, 1.0);
+        return;
+    }
+
+    N = normalize(N);
+
+    // Directional sunlight — warm golden light from upper-right
+    vec3 sunDir = normalize(vec3(0.48, 0.74, 0.32));
+    vec3 sunColor = vec3(1.12, 0.96, 0.78);
+    float NdotL = max(dot(N, sunDir), 0.0);
+    vec3 diffuse = sunColor * NdotL * 0.72;
+
+    // Hemisphere ambient: warm from above, cool from below
+    vec3 skyAmbient = vec3(0.32, 0.40, 0.55);   // cool blue-grey from sky
+    vec3 groundAmbient = vec3(0.12, 0.10, 0.06); // warm earth from below
+    float hemi = N.y * 0.5 + 0.5;
+    vec3 ambient = mix(groundAmbient, skyAmbient, hemi) * 0.62;
+
+    // Secondary fill light from opposite side (subtle)
+    vec3 fillDir = normalize(vec3(-0.3, 0.2, -0.5));
+    vec3 fillColor = vec3(0.18, 0.22, 0.32);
+    float fillNdotL = max(dot(N, fillDir), 0.0);
+    vec3 fill = fillColor * fillNdotL * 0.35;
+
+    // Blinn-Phong specular
+    vec3 viewDir = normalize(pc.cameraPos.xyz - fragWorldPos);
+    vec3 halfDir = normalize(sunDir + viewDir);
+    float spec = pow(max(dot(N, halfDir), 0.0), 32.0);
+    vec3 specular = sunColor * spec * 0.18;
+
+    // Combine lighting
+    vec3 litColor = fragColor * (ambient + diffuse + fill) + specular;
+
+    // Distance fog — blend toward sky color
+    float dist = length(fragWorldPos - pc.cameraPos.xyz);
+    float fogStart = 55.0;
+    float fogEnd = 210.0;
+    float fogFactor = clamp((dist - fogStart) / (fogEnd - fogStart), 0.0, 1.0);
+    fogFactor = fogFactor * fogFactor;  // Quadratic falloff for softer look
+    vec3 finalColor = mix(litColor, pc.fogColor.xyz, fogFactor);
+
+    // Tone mapping — subtle, prevents harsh whites
+    finalColor = finalColor / (finalColor + vec3(0.8));
+    finalColor = pow(finalColor, vec3(1.0/1.8));  // Gamma-like brightening
+
+    outColor = vec4(finalColor, 1.0);
 }
 )";
 
@@ -1055,6 +1675,14 @@ enum class StencilMode {
     WriteMirror,
     TestMirror,
 };
+
+// Must match the push_constant layout in both shaders
+struct PushConstantData {
+    Mat4 mvp;                                      // 64 bytes
+    float cameraPosX, cameraPosY, cameraPosZ, pad0; // 16 bytes (vec4)
+    float fogR, fogG, fogB, worldTime;              // 16 bytes (vec4)
+};                                                  // Total: 96 bytes
+static_assert(sizeof(PushConstantData) == 96, "PushConstantData must be 96 bytes");
 
 uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties)
 {
@@ -1145,6 +1773,7 @@ private:
     VkPipeline trianglePipeline = VK_NULL_HANDLE;
     VkPipeline linePipeline = VK_NULL_HANDLE;
     VkPipeline mirrorMaskPipeline = VK_NULL_HANDLE;
+    VkPipeline mirrorDepthClearPipeline = VK_NULL_HANDLE;
     VkPipeline reflectedTrianglePipeline = VK_NULL_HANDLE;
     VkPipeline reflectedLinePipeline = VK_NULL_HANDLE;
     VkCommandPool commandPool = VK_NULL_HANDLE;
@@ -1168,6 +1797,7 @@ private:
     std::vector<Vertex> reflectionTriangles;
     std::vector<Vertex> reflectionLines;
     std::vector<Vertex> mirrorMaskTriangles;
+    std::vector<Vertex> depthClearTriangles;
     std::vector<Vertex> mirrorTriangles;
     std::vector<Vertex> mirrorLines;
     std::vector<Vertex> overlayTriangles;
@@ -1494,7 +2124,7 @@ private:
         return module;
     }
 
-    VkPipeline createPipeline(VkPrimitiveTopology topology, bool depthTest, bool depthWrite, bool colorWrite, StencilMode stencilMode)
+    VkPipeline createPipeline(VkPrimitiveTopology topology, bool depthTest, bool depthWrite, bool colorWrite, StencilMode stencilMode, VkCompareOp depthCompareOp = VK_COMPARE_OP_LESS)
     {
         const auto vertCode = compileShader(VertexShader, shaderc_vertex_shader, "world.vert");
         const auto fragCode = compileShader(FragmentShader, shaderc_fragment_shader, "world.frag");
@@ -1517,9 +2147,10 @@ private:
         binding.binding = 0;
         binding.stride = sizeof(Vertex);
         binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-        std::array<VkVertexInputAttributeDescription, 2> attributes{};
+        std::array<VkVertexInputAttributeDescription, 3> attributes{};
         attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)};
         attributes[1] = {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, color)};
+        attributes[2] = {2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)};
         VkPipelineVertexInputStateCreateInfo vertexInput{};
         vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
         vertexInput.vertexBindingDescriptionCount = 1;
@@ -1557,7 +2188,7 @@ private:
         depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
         depth.depthTestEnable = depthTest ? VK_TRUE : VK_FALSE;
         depth.depthWriteEnable = depthWrite ? VK_TRUE : VK_FALSE;
-        depth.depthCompareOp = VK_COMPARE_OP_LESS;
+        depth.depthCompareOp = depthCompareOp;
         depth.stencilTestEnable = stencilMode == StencilMode::Off ? VK_FALSE : VK_TRUE;
         if (stencilMode == StencilMode::WriteMirror) {
             depth.front.compareOp = VK_COMPARE_OP_ALWAYS;
@@ -1615,9 +2246,9 @@ private:
     void createPipelines()
     {
         VkPushConstantRange pushRange{};
-        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushRange.offset = 0;
-        pushRange.size = sizeof(Mat4);
+        pushRange.size = sizeof(PushConstantData);
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         layoutInfo.pushConstantRangeCount = 1;
@@ -1628,8 +2259,11 @@ private:
         trianglePipeline = createPipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, true, true, true, StencilMode::Off);
         linePipeline = createPipeline(VK_PRIMITIVE_TOPOLOGY_LINE_LIST, true, true, true, StencilMode::Off);
         mirrorMaskPipeline = createPipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, true, false, false, StencilMode::WriteMirror);
-        reflectedTrianglePipeline = createPipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, false, false, true, StencilMode::TestMirror);
-        reflectedLinePipeline = createPipeline(VK_PRIMITIVE_TOPOLOGY_LINE_LIST, false, false, true, StencilMode::TestMirror);
+        // Depth-clear pipeline: writes far-plane depth in the stencil-masked mirror region
+        mirrorDepthClearPipeline = createPipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, true, true, false, StencilMode::TestMirror, VK_COMPARE_OP_ALWAYS);
+        // Reflected pipelines now have depth test+write so occluded faces are properly hidden
+        reflectedTrianglePipeline = createPipeline(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, true, true, true, StencilMode::TestMirror);
+        reflectedLinePipeline = createPipeline(VK_PRIMITIVE_TOPOLOGY_LINE_LIST, true, true, true, StencilMode::TestMirror);
     }
 
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer &buffer, VkDeviceMemory &memory)
@@ -1768,6 +2402,7 @@ private:
                              uint32_t reflectionTriCount,
                              uint32_t reflectionLineCount,
                              uint32_t mirrorMaskTriCount,
+                             uint32_t depthClearTriCount,
                              uint32_t mirrorTriCount,
                              uint32_t mirrorLineCount,
                              uint32_t overlayTriCount,
@@ -1776,8 +2411,11 @@ private:
         VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
+        // Sky/fog color — used for both clear and fog blending
+        const float fogR = 0.52f, fogG = 0.68f, fogB = 0.82f;
+
         std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color = {{0.36f, 0.49f, 0.68f, 1.0f}};
+        clearValues[0].color = {{fogR, fogG, fogB, 1.0f}};
         clearValues[1].depthStencil = {1.0f, 0};
         VkRenderPassBeginInfo renderInfo{};
         renderInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -1799,69 +2437,103 @@ private:
         vkCmdSetScissor(commandBuffer, 0, 1, &fullScissor);
 
         const float aspect = float(swapchainExtent.width) / float(std::max(1u, swapchainExtent.height));
+        const Vec3 camPos = game.cameraPosition();
+        const float wTime = game.getWorldTime();
+        const VkShaderStageFlags allStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        // Helper to build push constant data
+        auto makePushData = [&](const Mat4 &mvp) -> PushConstantData {
+            PushConstantData pc{};
+            pc.mvp = mvp;
+            pc.cameraPosX = camPos.x;
+            pc.cameraPosY = camPos.y;
+            pc.cameraPosZ = camPos.z;
+            pc.pad0 = 0.0f;
+            pc.fogR = fogR;
+            pc.fogG = fogG;
+            pc.fogB = fogB;
+            pc.worldTime = wTime;
+            return pc;
+        };
+
         Mat4 worldMvp = game.viewProjection(aspect);
         Mat4 reflectionMvp = game.reflectedViewProjection(aspect);
         Mat4 overlayMvp = Mat4::identity();
 
+        PushConstantData worldPC = makePushData(worldMvp);
+        PushConstantData reflectionPC = makePushData(reflectionMvp);
+        PushConstantData overlayPC = makePushData(overlayMvp);
+
         uint32_t first = 0;
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), worldMvp.m.data());
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &worldPC);
         if (triCount > 0) {
             vkCmdDraw(commandBuffer, triCount, 1, first, 0);
         }
         first += triCount;
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, linePipeline);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), worldMvp.m.data());
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &worldPC);
         if (lineCount > 0) {
             vkCmdDraw(commandBuffer, lineCount, 1, first, 0);
         }
         first += lineCount;
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mirrorMaskPipeline);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), worldMvp.m.data());
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &worldPC);
         if (mirrorMaskTriCount > 0) {
             vkCmdDraw(commandBuffer, mirrorMaskTriCount, 1, first, 0);
         }
         first += mirrorMaskTriCount;
 
+        // Clear the depth buffer in the mirror stencil region to far-plane (z≈1.0)
+        // using a fullscreen clip-space quad with identity MVP.
+        // This ensures reflected geometry (using reflected MVP) depth-tests against itself,
+        // not against stale world-scene depth values.
+        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, mirrorDepthClearPipeline);
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &overlayPC);
+        if (depthClearTriCount > 0) {
+            vkCmdDraw(commandBuffer, depthClearTriCount, 1, first, 0);
+        }
+        first += depthClearTriCount;
+
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, reflectedTrianglePipeline);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), reflectionMvp.m.data());
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &reflectionPC);
         if (reflectionTriCount > 0) {
             vkCmdDraw(commandBuffer, reflectionTriCount, 1, first, 0);
         }
         first += reflectionTriCount;
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, reflectedLinePipeline);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), reflectionMvp.m.data());
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &reflectionPC);
         if (reflectionLineCount > 0) {
             vkCmdDraw(commandBuffer, reflectionLineCount, 1, first, 0);
         }
         first += reflectionLineCount;
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), worldMvp.m.data());
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &worldPC);
         if (mirrorTriCount > 0) {
             vkCmdDraw(commandBuffer, mirrorTriCount, 1, first, 0);
         }
         first += mirrorTriCount;
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, linePipeline);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), worldMvp.m.data());
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &worldPC);
         if (mirrorLineCount > 0) {
             vkCmdDraw(commandBuffer, mirrorLineCount, 1, first, 0);
         }
         first += mirrorLineCount;
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, trianglePipeline);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), overlayMvp.m.data());
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &overlayPC);
         if (overlayTriCount > 0) {
             vkCmdDraw(commandBuffer, overlayTriCount, 1, first, 0);
         }
         first += overlayTriCount;
 
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, linePipeline);
-        vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(Mat4), overlayMvp.m.data());
+        vkCmdPushConstants(commandBuffer, pipelineLayout, allStages, 0, sizeof(PushConstantData), &overlayPC);
         if (overlayLineCount > 0) {
             vkCmdDraw(commandBuffer, overlayLineCount, 1, first, 0);
         }
@@ -1900,15 +2572,29 @@ private:
         game.buildMirrorMask(mirrorMaskTriangles);
         game.buildMirrorMeshes(mirrorTriangles, mirrorLines);
         game.buildOverlay(overlayTriangles, overlayLines, aspect);
+
+        // Fullscreen clip-space quad at z=0.9999 for clearing depth in the mirror stencil region.
+        // With the identity MVP, these clip coords map directly: x,y cover full screen, z≈1.0 = far depth.
+        depthClearTriangles.clear();
+        const Vec3 dcCol{0.0f, 0.0f, 0.0f};
+        const Vec3 dcNrm{0.0f, 0.0f, 0.0f};
+        depthClearTriangles.push_back({{-1.0f, -1.0f, 0.9999f}, dcCol, dcNrm});
+        depthClearTriangles.push_back({{ 1.0f, -1.0f, 0.9999f}, dcCol, dcNrm});
+        depthClearTriangles.push_back({{ 1.0f,  1.0f, 0.9999f}, dcCol, dcNrm});
+        depthClearTriangles.push_back({{-1.0f, -1.0f, 0.9999f}, dcCol, dcNrm});
+        depthClearTriangles.push_back({{ 1.0f,  1.0f, 0.9999f}, dcCol, dcNrm});
+        depthClearTriangles.push_back({{-1.0f,  1.0f, 0.9999f}, dcCol, dcNrm});
+
         std::vector<Vertex> all;
         all.reserve(triangles.size() + lines.size() +
                     reflectionTriangles.size() + reflectionLines.size() +
-                    mirrorMaskTriangles.size() +
+                    mirrorMaskTriangles.size() + depthClearTriangles.size() +
                     mirrorTriangles.size() + mirrorLines.size() +
                     overlayTriangles.size() + overlayLines.size());
         all.insert(all.end(), triangles.begin(), triangles.end());
         all.insert(all.end(), lines.begin(), lines.end());
         all.insert(all.end(), mirrorMaskTriangles.begin(), mirrorMaskTriangles.end());
+        all.insert(all.end(), depthClearTriangles.begin(), depthClearTriangles.end());
         all.insert(all.end(), reflectionTriangles.begin(), reflectionTriangles.end());
         all.insert(all.end(), reflectionLines.begin(), reflectionLines.end());
         all.insert(all.end(), mirrorTriangles.begin(), mirrorTriangles.end());
@@ -1925,6 +2611,7 @@ private:
                             static_cast<uint32_t>(reflectionTriangles.size()),
                             static_cast<uint32_t>(reflectionLines.size()),
                             static_cast<uint32_t>(mirrorMaskTriangles.size()),
+                            static_cast<uint32_t>(depthClearTriangles.size()),
                             static_cast<uint32_t>(mirrorTriangles.size()),
                             static_cast<uint32_t>(mirrorLines.size()),
                             static_cast<uint32_t>(overlayTriangles.size()),
@@ -1990,6 +2677,9 @@ private:
         if (mirrorMaskPipeline) {
             vkDestroyPipeline(device, mirrorMaskPipeline, nullptr);
         }
+        if (mirrorDepthClearPipeline) {
+            vkDestroyPipeline(device, mirrorDepthClearPipeline, nullptr);
+        }
         if (reflectedTrianglePipeline) {
             vkDestroyPipeline(device, reflectedTrianglePipeline, nullptr);
         }
@@ -1999,6 +2689,7 @@ private:
         trianglePipeline = VK_NULL_HANDLE;
         linePipeline = VK_NULL_HANDLE;
         mirrorMaskPipeline = VK_NULL_HANDLE;
+        mirrorDepthClearPipeline = VK_NULL_HANDLE;
         reflectedTrianglePipeline = VK_NULL_HANDLE;
         reflectedLinePipeline = VK_NULL_HANDLE;
         for (VkImageView view : swapchainImageViews) {
