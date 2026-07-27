@@ -257,7 +257,7 @@ public:
 
     void updateWindowTitle(SDL_Window *window) const
     {
-        const std::string title = "Vulkan World Shooter | FPS " + std::to_string(int(currentFps)) +
+        const std::string title = "Wildlands | FPS " + std::to_string(int(currentFps)) +
             " | Pos " + std::to_string(int(position.x)) + ", " + std::to_string(int(position.y)) + ", " + std::to_string(int(position.z)) +
             " | Shots " + std::to_string(totalShots) + " | Hits " + std::to_string(bulletMarks.size());
         SDL_SetWindowTitle(window, title.c_str());
@@ -307,9 +307,10 @@ public:
         triangles.clear();
         lines.clear();
 
-        const Vec3 crosshair = shotFlash > 0.0f ? Vec3{1.0f, 0.84f, 0.37f} : Vec3{0.92f, 0.96f, 0.93f};
-        const float gap = scopeAmount > 0.5f ? 0.010f : 0.017f;
-        const float length = scopeAmount > 0.5f ? 0.023f : 0.038f;
+        const Vec3 crosshair = shotFlash > 0.0f ? Vec3{1.0f, 0.70f, 0.24f} : Vec3{0.82f, 0.94f, 0.90f};
+        const float gap = scopeAmount > 0.5f ? 0.013f : 0.020f;
+        const float length = scopeAmount > 0.5f ? 0.025f : 0.040f;
+        addDisc2D(triangles, {0.0f, 0.0f, 0.0f}, 0.0038f, aspect, crosshair, 20);
         addLine2D(lines, {-length / aspect, 0.0f, 0.0f}, {-gap / aspect, 0.0f, 0.0f}, crosshair);
         addLine2D(lines, {gap / aspect, 0.0f, 0.0f}, {length / aspect, 0.0f, 0.0f}, crosshair);
         addLine2D(lines, {0.0f, -length, 0.0f}, {0.0f, -gap, 0.0f}, crosshair);
@@ -317,18 +318,10 @@ public:
 
         if (scopeAmount > 0.02f) {
             const float radius = 0.68f + scopeAmount * 0.06f;
-            const Vec3 scopeColor{0.47f, 0.92f, 0.88f};
-            constexpr int segments = 96;
-            for (int i = 0; i < segments; ++i) {
-                const float a0 = float(i) / float(segments) * Pi * 2.0f;
-                const float a1 = float(i + 1) / float(segments) * Pi * 2.0f;
-                addLine2D(lines, {std::cos(a0) * radius / aspect, std::sin(a0) * radius, 0.0f},
-                          {std::cos(a1) * radius / aspect, std::sin(a1) * radius, 0.0f}, scopeColor);
-            }
-            addLine2D(lines, {-radius / aspect, 0.0f, 0.0f}, {-0.04f / aspect, 0.0f, 0.0f}, scopeColor);
-            addLine2D(lines, {0.04f / aspect, 0.0f, 0.0f}, {radius / aspect, 0.0f, 0.0f}, scopeColor);
-            addLine2D(lines, {0.0f, -radius, 0.0f}, {0.0f, -0.04f, 0.0f}, scopeColor);
-            addLine2D(lines, {0.0f, 0.04f, 0.0f}, {0.0f, radius, 0.0f}, scopeColor);
+            const Vec3 scopeColor{0.34f, 0.78f, 0.72f};
+            addAnnulus2D(triangles, radius, 0.0065f, aspect, scopeColor, 128);
+            addLine2D(lines, {-radius / aspect, 0.0f, 0.0f}, {radius / aspect, 0.0f, 0.0f}, scopeColor);
+            addLine2D(lines, {0.0f, -radius, 0.0f}, {0.0f, radius, 0.0f}, scopeColor);
         }
     }
 
@@ -962,6 +955,16 @@ private:
         addVertex(triangles, c, color, nc);
     }
 
+    static void addTriangleSmooth(std::vector<Vertex> &triangles,
+                                  const Vec3 &a, const Vec3 &b, const Vec3 &c,
+                                  const Vec3 &ca, const Vec3 &cb, const Vec3 &cc,
+                                  const Vec3 &na, const Vec3 &nb, const Vec3 &nc)
+    {
+        addVertex(triangles, a, ca, na);
+        addVertex(triangles, b, cb, nb);
+        addVertex(triangles, c, cc, nc);
+    }
+
     static void addLine(std::vector<Vertex> &lines, const Vec3 &a, const Vec3 &b, const Vec3 &color)
     {
         addVertex(lines, a, color, {0.0f, 0.0f, 0.0f});
@@ -973,33 +976,94 @@ private:
         addLine(lines, {a.x, a.y, 0.0f}, {b.x, b.y, 0.0f}, color);
     }
 
+    static void addDisc2D(std::vector<Vertex> &triangles, const Vec3 &center, float radius, float aspect, const Vec3 &color, int segments)
+    {
+        for (int i = 0; i < segments; ++i) {
+            const float a0 = float(i) / float(segments) * Pi * 2.0f;
+            const float a1 = float(i + 1) / float(segments) * Pi * 2.0f;
+            addVertex(triangles, center, color, {0.0f, 0.0f, 0.0f});
+            addVertex(triangles, {center.x + std::cos(a0) * radius / aspect, center.y + std::sin(a0) * radius, 0.0f}, color, {0.0f, 0.0f, 0.0f});
+            addVertex(triangles, {center.x + std::cos(a1) * radius / aspect, center.y + std::sin(a1) * radius, 0.0f}, color, {0.0f, 0.0f, 0.0f});
+        }
+    }
+
+    static void addAnnulus2D(std::vector<Vertex> &triangles, float radius, float thickness, float aspect, const Vec3 &color, int segments)
+    {
+        const float inner = std::max(0.0f, radius - thickness);
+        const float outer = radius + thickness;
+        for (int i = 0; i < segments; ++i) {
+            const float a0 = float(i) / float(segments) * Pi * 2.0f;
+            const float a1 = float(i + 1) / float(segments) * Pi * 2.0f;
+            const Vec3 i0{std::cos(a0) * inner / aspect, std::sin(a0) * inner, 0.0f};
+            const Vec3 o0{std::cos(a0) * outer / aspect, std::sin(a0) * outer, 0.0f};
+            const Vec3 i1{std::cos(a1) * inner / aspect, std::sin(a1) * inner, 0.0f};
+            const Vec3 o1{std::cos(a1) * outer / aspect, std::sin(a1) * outer, 0.0f};
+            addVertex(triangles, i0, color, {0.0f, 0.0f, 0.0f});
+            addVertex(triangles, o0, color, {0.0f, 0.0f, 0.0f});
+            addVertex(triangles, o1, color, {0.0f, 0.0f, 0.0f});
+            addVertex(triangles, i0, color, {0.0f, 0.0f, 0.0f});
+            addVertex(triangles, o1, color, {0.0f, 0.0f, 0.0f});
+            addVertex(triangles, i1, color, {0.0f, 0.0f, 0.0f});
+        }
+    }
+
     static void addBox(std::vector<Vertex> &triangles, const Vec3 &center, const Vec3 &size, const Vec3 &color)
     {
-        const float x0 = center.x - size.x * 0.5f;
-        const float x1 = center.x + size.x * 0.5f;
-        const float y0 = center.y - size.y * 0.5f;
-        const float y1 = center.y + size.y * 0.5f;
-        const float z0 = center.z - size.z * 0.5f;
-        const float z1 = center.z + size.z * 0.5f;
-        const std::array<Vec3, 8> p = {{
-            {x0, y0, z0}, {x1, y0, z0}, {x1, y1, z0}, {x0, y1, z0},
-            {x0, y0, z1}, {x1, y0, z1}, {x1, y1, z1}, {x0, y1, z1},
-        }};
-        // Each face gets its actual outward normal — the shader does real lighting
-        auto quadN = [&](int a, int b, int c, int d, const Vec3 &normal) {
-            addVertex(triangles, p[a], color, normal);
-            addVertex(triangles, p[b], color, normal);
-            addVertex(triangles, p[c], color, normal);
-            addVertex(triangles, p[a], color, normal);
-            addVertex(triangles, p[c], color, normal);
-            addVertex(triangles, p[d], color, normal);
+        // A compact bevelled-box mesh. Collision remains the original AABB, while
+        // the visible mesh gets broad planar faces, curved edges and rounded corners.
+        const Vec3 half = size * 0.5f;
+        const float radius = std::max(0.015f, std::min({half.x, half.y, half.z}) * 0.34f);
+        const Vec3 inner{
+            std::max(0.0f, half.x - radius),
+            std::max(0.0f, half.y - radius),
+            std::max(0.0f, half.z - radius),
         };
-        quadN(4, 5, 6, 7, {0.0f, 0.0f, 1.0f});   // +Z face
-        quadN(1, 0, 3, 2, {0.0f, 0.0f, -1.0f});   // -Z face
-        quadN(3, 7, 6, 2, {0.0f, 1.0f, 0.0f});    // +Y face (top)
-        quadN(0, 1, 5, 4, {0.0f, -1.0f, 0.0f});   // -Y face (bottom)
-        quadN(0, 4, 7, 3, {-1.0f, 0.0f, 0.0f});   // -X face
-        quadN(5, 1, 2, 6, {1.0f, 0.0f, 0.0f});    // +X face
+
+        auto roundedPoint = [&](const Vec3 &cubePoint) {
+            const Vec3 nearest{
+                clamp(cubePoint.x, -inner.x, inner.x),
+                clamp(cubePoint.y, -inner.y, inner.y),
+                clamp(cubePoint.z, -inner.z, inner.z),
+            };
+            Vec3 outward = cubePoint - nearest;
+            if (outward.lengthSquared() < 0.000001f) {
+                outward = {0.0f, 1.0f, 0.0f};
+            }
+            const Vec3 normal = outward.normalized();
+            return std::pair<Vec3, Vec3>{center + nearest + normal * radius, normal};
+        };
+
+        constexpr int bevelSegments = 3;
+        auto face = [&](int axis, float sign, bool reverse) {
+            for (int row = 0; row < bevelSegments; ++row) {
+                for (int col = 0; col < bevelSegments; ++col) {
+                    const float u0 = -1.0f + 2.0f * float(col) / float(bevelSegments);
+                    const float u1 = -1.0f + 2.0f * float(col + 1) / float(bevelSegments);
+                    const float v0 = -1.0f + 2.0f * float(row) / float(bevelSegments);
+                    const float v1 = -1.0f + 2.0f * float(row + 1) / float(bevelSegments);
+                    auto cube = [&](float u, float v) {
+                        if (axis == 0) return Vec3{sign * half.x, v * half.y, u * half.z};
+                        if (axis == 1) return Vec3{u * half.x, sign * half.y, v * half.z};
+                        return Vec3{u * half.x, v * half.y, sign * half.z};
+                    };
+                    auto p0 = roundedPoint(cube(u0, v0));
+                    auto p1 = roundedPoint(cube(u1, v0));
+                    auto p2 = roundedPoint(cube(u1, v1));
+                    auto p3 = roundedPoint(cube(u0, v1));
+                    if (reverse) {
+                        std::swap(p1, p3);
+                    }
+                    addTriangleWithNormals(triangles, p0.first, p1.first, p2.first, color, p0.second, p1.second, p2.second);
+                    addTriangleWithNormals(triangles, p0.first, p2.first, p3.first, color, p0.second, p2.second, p3.second);
+                }
+            }
+        };
+        face(0, 1.0f, true);
+        face(0, -1.0f, false);
+        face(1, 1.0f, false);
+        face(1, -1.0f, true);
+        face(2, 1.0f, false);
+        face(2, -1.0f, true);
     }
 
     static Vec3 rotateY(const Vec3 &v, float degrees)
@@ -1032,37 +1096,57 @@ private:
         const Vec3 reference = std::abs(forward.y) > 0.92f ? Vec3{1.0f, 0.0f, 0.0f} : Vec3{0.0f, 1.0f, 0.0f};
         const Vec3 right = cross(reference, forward).normalized();
         const Vec3 up = cross(forward, right).normalized();
-        const Vec3 center = (start + end) * 0.5f;
         const float halfThickness = thickness * 0.5f;
-        const Vec3 hx = right * halfThickness;
-        const Vec3 hy = up * halfThickness;
-        const Vec3 hz = forward * (length * 0.5f);
+        // Smooth octagonal limb/branch with softly capped ends.
+        constexpr int sides = 10;
+        for (int i = 0; i < sides; ++i) {
+            const float a0 = float(i) / float(sides) * Pi * 2.0f;
+            const float a1 = float(i + 1) / float(sides) * Pi * 2.0f;
+            const Vec3 n0 = right * std::cos(a0) + up * std::sin(a0);
+            const Vec3 n1 = right * std::cos(a1) + up * std::sin(a1);
+            const Vec3 s0 = start + n0 * halfThickness;
+            const Vec3 s1 = start + n1 * halfThickness;
+            const Vec3 e0 = end + n0 * halfThickness;
+            const Vec3 e1 = end + n1 * halfThickness;
+            addTriangleWithNormals(triangles, s0, e0, e1, color, n0, n0, n1);
+            addTriangleWithNormals(triangles, s0, e1, s1, color, n0, n1, n1);
+            addTriangleWithNormals(triangles, start - forward * halfThickness * 0.28f, s1, s0, color, -forward, -forward, -forward);
+            addTriangleWithNormals(triangles, end + forward * halfThickness * 0.28f, e0, e1, color, forward, forward, forward);
+        }
+    }
 
-        const std::array<Vec3, 8> p = {{
-            center - hx - hy - hz,
-            center + hx - hy - hz,
-            center + hx + hy - hz,
-            center - hx + hy - hz,
-            center - hx - hy + hz,
-            center + hx - hy + hz,
-            center + hx + hy + hz,
-            center - hx + hy + hz,
-        }};
-
-        auto quadN = [&](int a, int b, int c, int d, const Vec3 &normal) {
-            addVertex(triangles, p[a], color, normal);
-            addVertex(triangles, p[b], color, normal);
-            addVertex(triangles, p[c], color, normal);
-            addVertex(triangles, p[a], color, normal);
-            addVertex(triangles, p[c], color, normal);
-            addVertex(triangles, p[d], color, normal);
+    static void addEllipsoid(std::vector<Vertex> &triangles, const Vec3 &center, const Vec3 &size, const Vec3 &color, float yawDegrees = 0.0f, int rings = 5, int sides = 10)
+    {
+        const Vec3 radius = size * 0.5f;
+        auto sample = [&](float latitude, float longitude) {
+            const Vec3 unit{
+                std::cos(latitude) * std::cos(longitude),
+                std::sin(latitude),
+                std::cos(latitude) * std::sin(longitude),
+            };
+            Vec3 local{unit.x * radius.x, unit.y * radius.y, unit.z * radius.z};
+            Vec3 normal{
+                unit.x / std::max(radius.x, 0.001f),
+                unit.y / std::max(radius.y, 0.001f),
+                unit.z / std::max(radius.z, 0.001f),
+            };
+            normal = normal.normalized();
+            return std::pair<Vec3, Vec3>{center + rotateY(local, yawDegrees), rotateY(normal, yawDegrees)};
         };
-        quadN(4, 5, 6, 7, forward);
-        quadN(1, 0, 3, 2, -forward);
-        quadN(3, 7, 6, 2, up);
-        quadN(0, 1, 5, 4, -up);
-        quadN(0, 4, 7, 3, -right);
-        quadN(5, 1, 2, 6, right);
+        for (int ring = 0; ring < rings; ++ring) {
+            const float lat0 = -Pi * 0.5f + Pi * float(ring) / float(rings);
+            const float lat1 = -Pi * 0.5f + Pi * float(ring + 1) / float(rings);
+            for (int side = 0; side < sides; ++side) {
+                const float lon0 = Pi * 2.0f * float(side) / float(sides);
+                const float lon1 = Pi * 2.0f * float(side + 1) / float(sides);
+                const auto p0 = sample(lat0, lon0);
+                const auto p1 = sample(lat0, lon1);
+                const auto p2 = sample(lat1, lon1);
+                const auto p3 = sample(lat1, lon0);
+                addTriangleWithNormals(triangles, p0.first, p2.first, p1.first, color, p0.second, p2.second, p1.second);
+                addTriangleWithNormals(triangles, p0.first, p3.first, p2.first, color, p0.second, p3.second, p2.second);
+            }
+        }
     }
 
     void addSky(std::vector<Vertex> &triangles) const
@@ -1091,16 +1175,23 @@ private:
                 const Vec3 nb = terrainNormalAt(x1, z0);
                 const Vec3 nc = terrainNormalAt(x1, z1);
                 const Vec3 nd = terrainNormalAt(x0, z1);
-                const float lush = clamp(((a.y + b.y + c.y + d.y) * 0.25f + 1.5f) / 7.5f, 0.0f, 1.0f);
-                const float patch = deterministic01(x * 97 + z * 193);
-                const float fine = 0.5f + 0.5f * std::sin(x0 * 0.31f + z0 * 0.27f);
-                const float shade = 0.82f + patch * 0.18f + fine * 0.06f;
-                // Richer, more natural terrain colors
-                const Vec3 base{0.10f + lush * 0.08f, 0.28f + lush * 0.28f, 0.08f + lush * 0.08f};
-                const Vec3 color{base.x * shade, base.y * shade, base.z * shade};
-                const Vec3 color2 = color * (0.88f + patch * 0.12f);
-                addTriangleWithNormals(triangles, a, b, c, color, na, nb, nc);
-                addTriangleWithNormals(triangles, a, c, d, color2, na, nc, nd);
+                auto terrainColor = [](const Vec3 &p) {
+                    const float lush = clamp((p.y + 1.5f) / 7.5f, 0.0f, 1.0f);
+                    const float broad = std::sin(p.x * 0.045f) * std::cos(p.z * 0.052f);
+                    const float fine = std::sin(p.x * 0.19f + p.z * 0.14f) * 0.5f;
+                    const float shade = 0.91f + broad * 0.055f + fine * 0.025f;
+                    return Vec3{
+                        (0.105f + lush * 0.065f) * shade,
+                        (0.30f + lush * 0.22f) * shade,
+                        (0.085f + lush * 0.065f) * shade,
+                    };
+                };
+                const Vec3 ca = terrainColor(a);
+                const Vec3 cb = terrainColor(b);
+                const Vec3 cc = terrainColor(c);
+                const Vec3 cd = terrainColor(d);
+                addTriangleSmooth(triangles, a, b, c, ca, cb, cc, na, nb, nc);
+                addTriangleSmooth(triangles, a, c, d, ca, cc, cd, na, nc, nd);
             }
         }
     }
@@ -1123,7 +1214,7 @@ private:
             return rotateY(local, modelYaw) + animal.position;
         };
         auto box = [&](const Vec3 &local, const Vec3 &size, const Vec3 &color) {
-            addTransformedBox(triangles, tx(local), size * animal.scale, color, modelYaw);
+            addEllipsoid(triangles, tx(local), size * animal.scale, color, modelYaw);
         };
         auto segment = [&](const Vec3 &a, const Vec3 &b, float thickness, const Vec3 &color) {
             addSegmentBox(triangles, tx(a), tx(b), thickness * animal.scale, color);
@@ -1148,8 +1239,8 @@ private:
             line({0.95f, 1.92f + headBob, -0.24f}, {0.72f, 2.08f + headBob, -0.40f}, cream);
             line({0.95f, 1.92f + headBob, 0.24f}, {0.72f, 2.08f + headBob, 0.40f}, cream);
             for (float side : std::array{-1.0f, 1.0f}) {
-                segment({-0.58f, 0.48f, side * 0.20f}, {-0.68f + counterStride, 0.08f + footLift, side * 0.22f}, 0.13f, hideDark);
-                segment({0.52f, 0.48f, side * 0.20f}, {0.60f + stride, 0.08f + footLift, side * 0.22f}, 0.13f, hideDark);
+                segment({-0.58f, 0.80f, side * 0.18f}, {-0.68f + counterStride, 0.08f + footLift, side * 0.22f}, 0.16f, hideDark);
+                segment({0.52f, 0.80f, side * 0.18f}, {0.60f + stride, 0.08f + footLift, side * 0.22f}, 0.16f, hideDark);
             }
             segment({-0.95f, 0.90f, 0.0f}, {-1.22f, 0.98f + tailWag * 0.08f, 0.0f}, 0.12f, cream);
         } else if (animal.kind == 1) {
@@ -1164,8 +1255,8 @@ private:
             line({1.22f, 0.45f, -0.14f}, {1.42f, 0.54f, -0.28f}, tusk);
             line({1.22f, 0.45f, 0.14f}, {1.42f, 0.54f, 0.28f}, tusk);
             for (float side : std::array{-1.0f, 1.0f}) {
-                segment({-0.54f, 0.28f, side * 0.24f}, {-0.56f + counterStride * 0.75f, 0.04f + footLift * 0.65f, side * 0.24f}, 0.12f, furDark);
-                segment({0.46f, 0.28f, side * 0.24f}, {0.48f + stride * 0.75f, 0.04f + footLift * 0.65f, side * 0.24f}, 0.12f, furDark);
+                segment({-0.54f, 0.55f, side * 0.22f}, {-0.56f + counterStride * 0.75f, 0.04f + footLift * 0.65f, side * 0.24f}, 0.15f, furDark);
+                segment({0.46f, 0.55f, side * 0.22f}, {0.48f + stride * 0.75f, 0.04f + footLift * 0.65f, side * 0.24f}, 0.15f, furDark);
             }
             line({-0.92f, 0.68f, 0.0f}, {-1.12f, 0.72f + tailWag * 0.08f, 0.0f}, furDark);
         } else {
@@ -1178,8 +1269,8 @@ private:
             box({0.52f, 0.87f + headBob, 0.12f}, {0.12f, 0.52f, 0.08f}, fur);
             box({-0.58f, 0.38f, 0.0f}, {0.25f, 0.25f, 0.25f}, white);
             for (float side : std::array{-1.0f, 1.0f}) {
-                segment({-0.24f, 0.10f, side * 0.12f}, {-0.42f + counterStride, 0.02f + footLift, side * 0.16f}, 0.08f, furDark);
-                segment({0.28f, 0.10f, side * 0.12f}, {0.44f + stride, 0.02f + footLift, side * 0.16f}, 0.08f, furDark);
+                segment({-0.24f, 0.27f, side * 0.10f}, {-0.42f + counterStride, 0.02f + footLift, side * 0.16f}, 0.10f, furDark);
+                segment({0.28f, 0.27f, side * 0.10f}, {0.44f + stride, 0.02f + footLift, side * 0.16f}, 0.10f, furDark);
             }
         }
     }
@@ -1218,13 +1309,13 @@ private:
             const float y = terrainHeightAt(x, z) + 0.10f;
             const float trunkHeight = 1.7f + deterministic01(i * 19) * 1.6f;
             // Warmer, richer trunk brown
-            addBox(triangles, {x, y + trunkHeight * 0.5f, z}, {0.55f, trunkHeight, 0.55f}, {0.34f, 0.22f, 0.12f});
+            addSegmentBox(triangles, {x, y, z}, {x, y + trunkHeight, z}, 0.58f, {0.34f, 0.22f, 0.12f});
             // Root flare — darker
-            addBox(triangles, {x, y + 0.08f, z}, {1.10f, 0.16f, 1.10f}, {0.24f, 0.15f, 0.08f});
+            addEllipsoid(triangles, {x, y + 0.08f, z}, {1.10f, 0.22f, 1.10f}, {0.24f, 0.15f, 0.08f});
             // Foliage — richer, more varied greens
             const float foliageVariation = deterministic01(i + 3) * 0.18f;
-            addBox(triangles, {x, y + trunkHeight + 0.75f, z}, {3.0f, 1.6f, 3.0f}, {0.08f + foliageVariation * 0.3f, 0.32f + foliageVariation, 0.10f + foliageVariation * 0.2f});
-            addBox(triangles, {x, y + trunkHeight + 1.65f, z}, {2.1f, 1.3f, 2.1f}, {0.06f, 0.26f + foliageVariation * 0.5f, 0.09f});
+            addEllipsoid(triangles, {x - 0.22f, y + trunkHeight + 0.72f, z}, {3.25f, 1.85f, 3.05f}, {0.08f + foliageVariation * 0.3f, 0.32f + foliageVariation, 0.10f + foliageVariation * 0.2f});
+            addEllipsoid(triangles, {x + 0.32f, y + trunkHeight + 1.60f, z - 0.18f}, {2.35f, 1.55f, 2.25f}, {0.06f, 0.26f + foliageVariation * 0.5f, 0.09f});
         }
 
         for (int i = 0; i < 46; ++i) {
@@ -1234,7 +1325,7 @@ private:
             const float scale = 0.45f + deterministic01(i * 23) * 1.25f;
             // Rocks with subtle warm/cool color variation
             const float rockTone = deterministic01(i * 31 + 5) * 0.08f;
-            addBox(triangles, {x, y, z}, {scale * 1.4f, scale * 0.55f, scale}, {0.32f + rockTone, 0.30f + rockTone * 0.5f, 0.28f - rockTone * 0.5f});
+            addEllipsoid(triangles, {x, y, z}, {scale * 1.4f, scale * 0.62f, scale}, {0.32f + rockTone, 0.30f + rockTone * 0.5f, 0.28f - rockTone * 0.5f}, deterministic01(i * 11) * 180.0f, 5, 10);
         }
     }
 
@@ -1242,13 +1333,6 @@ private:
     {
         for (const WorldBox &box : worldBoxes) {
             addBox(triangles, box.center, box.size, box.color);
-            const Vec3 half = box.size * 0.5f;
-            const float y = box.center.y + half.y + 0.03f;
-            const Vec3 c{0.90f, 0.96f, 0.90f};
-            addLine(lines, {box.center.x - half.x, y, box.center.z - half.z}, {box.center.x + half.x, y, box.center.z - half.z}, c);
-            addLine(lines, {box.center.x + half.x, y, box.center.z - half.z}, {box.center.x + half.x, y, box.center.z + half.z}, c);
-            addLine(lines, {box.center.x + half.x, y, box.center.z + half.z}, {box.center.x - half.x, y, box.center.z + half.z}, c);
-            addLine(lines, {box.center.x - half.x, y, box.center.z + half.z}, {box.center.x - half.x, y, box.center.z - half.z}, c);
         }
     }
 
@@ -1269,7 +1353,7 @@ private:
             return local + Vec3{pos.x, pos.y - currentEyeHeight() + bodyBob, pos.z};
         };
         auto box = [&](const Vec3 &local, const Vec3 &size, const Vec3 &color) {
-            addTransformedBox(triangles, tx(local), size, color, modelYaw);
+            addEllipsoid(triangles, tx(local), size, color, modelYaw, 6, 12);
         };
         auto segment = [&](const Vec3 &a, const Vec3 &b, float thickness, const Vec3 &color) {
             addSegmentBox(triangles, tx(a), tx(b), thickness, color);
@@ -1278,13 +1362,13 @@ private:
             return a + (b - a) * amount;
         };
 
-        const Vec3 suitDark{0.09f, 0.11f, 0.16f};
-        const Vec3 suitMid{0.18f, 0.23f, 0.29f};
-        const Vec3 suitLight{0.24f, 0.31f, 0.38f};
-        const Vec3 armor{0.34f, 0.40f, 0.42f};
-        const Vec3 skin{0.62f, 0.50f, 0.41f};
+        const Vec3 suitDark{0.055f, 0.068f, 0.078f};
+        const Vec3 suitMid{0.11f, 0.14f, 0.15f};
+        const Vec3 suitLight{0.17f, 0.21f, 0.21f};
+        const Vec3 armor{0.24f, 0.28f, 0.27f};
+        const Vec3 skin{0.55f, 0.39f, 0.29f};
         const Vec3 black{0.035f, 0.040f, 0.050f};
-        const Vec3 cyan{0.10f, 0.45f, 0.50f};
+        const Vec3 cyan{0.055f, 0.25f, 0.26f};
 
         box({0.0f, 1.18f - torsoDrop, -0.18f}, {0.72f, 0.54f, 0.34f}, suitMid);
         box({0.0f, 0.89f - hipDrop, -0.14f}, {0.56f, 0.38f, 0.30f}, suitMid);
@@ -1333,8 +1417,14 @@ private:
         box(rightHand, {0.18f, 0.15f, 0.20f}, skin);
 
         if (includeHead) {
-            box({0.0f, 1.72f - headDrop, -0.20f}, {0.42f, 0.42f, 0.36f}, skin);
-            box({0.0f, 1.98f - headDrop, -0.21f}, {0.48f, 0.16f, 0.40f}, black);
+            segment({0.0f, 1.46f - headDrop, -0.18f}, {0.0f, 1.57f - headDrop, -0.19f}, 0.20f, skin * 0.78f);
+            box({0.0f, 1.75f - headDrop, -0.20f}, {0.37f, 0.46f, 0.35f}, skin);
+            box({0.0f, 1.96f - headDrop, -0.20f}, {0.40f, 0.15f, 0.36f}, black);
+            const Vec3 eyeColor{0.025f, 0.030f, 0.026f};
+            addEllipsoid(triangles, tx({-0.075f, 1.80f - headDrop, -0.372f}), {0.050f, 0.032f, 0.022f}, eyeColor, modelYaw, 4, 8);
+            addEllipsoid(triangles, tx({0.075f, 1.80f - headDrop, -0.372f}), {0.050f, 0.032f, 0.022f}, eyeColor, modelYaw, 4, 8);
+            addEllipsoid(triangles, tx({0.0f, 1.72f - headDrop, -0.387f}), {0.055f, 0.085f, 0.045f}, skin * 0.86f, modelYaw, 4, 8);
+            addEllipsoid(triangles, tx({0.0f, 1.635f - headDrop, -0.374f}), {0.105f, 0.025f, 0.018f}, {0.20f, 0.075f, 0.055f}, modelYaw, 3, 8);
         }
 
         if (includeWeapon) {
@@ -1343,18 +1433,28 @@ private:
             const Vec3 gunMetal{0.34f, 0.38f, 0.40f};
             const float pitchPush = -pitchDegrees * 0.004f;
             const Vec3 scopedWeaponOffset = weaponAimOffset * aimLift;
-            box(Vec3{0.0f, 1.04f + pitchPush, -0.72f} + scopedWeaponOffset, {0.42f, 0.28f, 0.58f}, gunBody);
-            box(Vec3{0.0f, 1.03f + pitchPush, -1.16f} + scopedWeaponOffset, {0.18f, 0.18f, 0.70f}, gunDark);
-            box(Vec3{0.0f, 1.20f + pitchPush, -0.88f} + scopedWeaponOffset, {0.24f, 0.08f, 0.48f}, gunMetal);
-            box(Vec3{-0.12f, 1.27f + pitchPush, -0.79f} + scopedWeaponOffset, {0.06f, 0.18f, 0.08f}, gunMetal);
-            box(Vec3{0.12f, 1.27f + pitchPush, -0.79f} + scopedWeaponOffset, {0.06f, 0.18f, 0.08f}, gunMetal);
-            box(Vec3{-0.12f, 1.27f + pitchPush, -0.97f} + scopedWeaponOffset, {0.06f, 0.18f, 0.08f}, gunMetal);
-            box(Vec3{0.12f, 1.27f + pitchPush, -0.97f} + scopedWeaponOffset, {0.06f, 0.18f, 0.08f}, gunMetal);
-            box(Vec3{0.0f, 1.34f + pitchPush, -0.88f} + scopedWeaponOffset, {0.23f, 0.17f, 0.18f}, gunDark);
-            box(Vec3{0.0f, 1.34f + pitchPush, -1.02f} + scopedWeaponOffset, {0.12f, 0.09f, 0.16f}, cyan);
-            box(Vec3{0.0f, 0.83f + pitchPush, -0.56f} + scopedWeaponOffset, {0.20f, 0.44f, 0.18f}, gunDark);
-            box(Vec3{0.0f, 1.03f + pitchPush, -1.58f} + scopedWeaponOffset, {0.28f, 0.24f, 0.18f}, gunMetal);
-            box(Vec3{0.0f, 1.03f + pitchPush, -1.70f} + scopedWeaponOffset, {0.16f, 0.16f, 0.08f}, shotFlash > 0.0f ? Vec3{1.0f, 0.70f, 0.16f} : Vec3{0.82f, 0.42f, 0.10f});
+            auto gunPart = [&](const Vec3 &local, const Vec3 &size, const Vec3 &color) {
+                addTransformedBox(triangles, tx(local), size, color, modelYaw);
+            };
+            gunPart(Vec3{0.0f, 1.04f + pitchPush, -0.72f} + scopedWeaponOffset, {0.42f, 0.28f, 0.58f}, gunBody);
+            segment(Vec3{0.0f, 1.03f + pitchPush, -0.88f} + scopedWeaponOffset,
+                    Vec3{0.0f, 1.03f + pitchPush, -1.54f} + scopedWeaponOffset, 0.18f, gunDark);
+            gunPart(Vec3{0.0f, 1.19f + pitchPush, -0.90f} + scopedWeaponOffset, {0.28f, 0.08f, 0.55f}, gunMetal);
+            gunPart(Vec3{0.0f, 1.27f + pitchPush, -0.76f} + scopedWeaponOffset, {0.10f, 0.18f, 0.09f}, gunDark);
+            gunPart(Vec3{0.0f, 1.27f + pitchPush, -1.04f} + scopedWeaponOffset, {0.10f, 0.18f, 0.09f}, gunDark);
+            segment(Vec3{0.0f, 1.36f + pitchPush, -0.68f} + scopedWeaponOffset,
+                    Vec3{0.0f, 1.36f + pitchPush, -1.13f} + scopedWeaponOffset, 0.20f, gunDark);
+            addEllipsoid(triangles, tx(Vec3{0.0f, 1.36f + pitchPush, -0.66f} + scopedWeaponOffset),
+                         {0.25f, 0.25f, 0.16f}, gunMetal, modelYaw, 5, 12);
+            addEllipsoid(triangles, tx(Vec3{0.0f, 1.36f + pitchPush, -1.15f} + scopedWeaponOffset),
+                         {0.25f, 0.25f, 0.17f}, gunMetal, modelYaw, 5, 12);
+            addEllipsoid(triangles, tx(Vec3{0.0f, 1.36f + pitchPush, -1.245f} + scopedWeaponOffset),
+                         {0.17f, 0.17f, 0.035f}, cyan, modelYaw, 4, 12);
+            gunPart(Vec3{0.0f, 0.83f + pitchPush, -0.56f} + scopedWeaponOffset, {0.20f, 0.44f, 0.18f}, gunDark);
+            addEllipsoid(triangles, tx(Vec3{0.0f, 1.03f + pitchPush, -1.60f} + scopedWeaponOffset),
+                         {0.27f, 0.23f, 0.24f}, gunMetal, modelYaw, 5, 10);
+            addEllipsoid(triangles, tx(Vec3{0.0f, 1.03f + pitchPush, -1.72f} + scopedWeaponOffset),
+                         {0.17f, 0.17f, 0.10f}, shotFlash > 0.0f ? Vec3{1.0f, 0.70f, 0.16f} : Vec3{0.055f, 0.050f, 0.045f}, modelYaw, 5, 10);
         }
     }
 
@@ -1377,8 +1477,6 @@ private:
         addLine(lines, {mirrorWidth * 0.5f, y0, faceZ + 0.02f}, {mirrorWidth * 0.5f, y1, faceZ + 0.02f}, {0.92f, 0.98f, 1.0f});
         addLine(lines, {mirrorWidth * 0.5f, y1, faceZ + 0.02f}, {-mirrorWidth * 0.5f, y1, faceZ + 0.02f}, {0.92f, 0.98f, 1.0f});
         addLine(lines, {-mirrorWidth * 0.5f, y1, faceZ + 0.02f}, {-mirrorWidth * 0.5f, y0, faceZ + 0.02f}, {0.92f, 0.98f, 1.0f});
-        addLine(lines, {-mirrorWidth * 0.36f, y1 - 0.7f, faceZ + 0.04f}, {mirrorWidth * 0.12f, y0 + 0.75f, faceZ + 0.04f}, {0.90f, 1.0f, 1.0f});
-        addLine(lines, {-mirrorWidth * 0.10f, y1 - 0.45f, faceZ + 0.04f}, {mirrorWidth * 0.34f, y0 + 1.25f, faceZ + 0.04f}, {0.72f, 0.92f, 1.0f});
     }
 
     void addFlyingBullets(std::vector<Vertex> &triangles, std::vector<Vertex> &lines) const
@@ -1393,7 +1491,7 @@ private:
         }
     }
 
-    static void addDecalQuad(std::vector<Vertex> &triangles, const Vec3 &position, const Vec3 &normal, float size, const Vec3 &color)
+    static void addDecalDisc(std::vector<Vertex> &triangles, const Vec3 &position, const Vec3 &normal, float radius, const Vec3 &color, int segments = 18)
     {
         Vec3 tangent = cross(normal, {0.0f, 1.0f, 0.0f});
         if (tangent.lengthSquared() < 0.01f) {
@@ -1402,16 +1500,17 @@ private:
         tangent = tangent.normalized();
         const Vec3 bitangent = cross(normal, tangent).normalized();
         const Vec3 p = position + normal * 0.018f;
-        const Vec3 a = p - tangent * size - bitangent * size;
-        const Vec3 b = p + tangent * size - bitangent * size;
-        const Vec3 c = p + tangent * size + bitangent * size;
-        const Vec3 d = p - tangent * size + bitangent * size;
-        addVertex(triangles, a, color, normal);
-        addVertex(triangles, b, color, normal);
-        addVertex(triangles, c, color, normal);
-        addVertex(triangles, a, color, normal);
-        addVertex(triangles, c, color, normal);
-        addVertex(triangles, d, color, normal);
+        for (int i = 0; i < segments; ++i) {
+            const float a0 = float(i) / float(segments) * Pi * 2.0f;
+            const float a1 = float(i + 1) / float(segments) * Pi * 2.0f;
+            const float irregular0 = radius * (0.88f + 0.12f * std::sin(float(i) * 5.73f));
+            const float irregular1 = radius * (0.88f + 0.12f * std::sin(float(i + 1) * 5.73f));
+            const Vec3 edge0 = p + tangent * (std::cos(a0) * irregular0) + bitangent * (std::sin(a0) * irregular0);
+            const Vec3 edge1 = p + tangent * (std::cos(a1) * irregular1) + bitangent * (std::sin(a1) * irregular1);
+            addVertex(triangles, p, color, normal);
+            addVertex(triangles, edge0, color * 0.62f, normal);
+            addVertex(triangles, edge1, color * 0.62f, normal);
+        }
     }
 
     static void addBasisBox(std::vector<Vertex> &triangles, const Vec3 &center, const Vec3 &xAxis, const Vec3 &yAxis, const Vec3 &zAxis, const Vec3 &size, const Vec3 &color)
@@ -1456,11 +1555,9 @@ private:
         const Vec3 bitangent = cross(surfaceNormal, tangent).normalized();
         const Vec3 darkBlood{0.18f + glow * 0.22f, 0.015f, 0.01f};
         const Vec3 freshBlood{0.42f + glow * 0.35f, 0.025f + glow * 0.04f, 0.015f};
-        const Vec3 embedded = position - surfaceNormal * 0.014f;
-
-        addBasisBox(triangles, embedded, tangent, bitangent, surfaceNormal, {0.24f, 0.14f, 0.026f}, darkBlood);
-        addBasisBox(triangles, embedded + tangent * 0.06f + bitangent * 0.02f, tangent, bitangent, surfaceNormal, {0.11f, 0.07f, 0.020f}, freshBlood);
-        addBasisBox(triangles, embedded - tangent * 0.07f - bitangent * 0.03f, tangent, bitangent, surfaceNormal, {0.08f, 0.055f, 0.018f}, darkBlood * 0.72f);
+        addDecalDisc(triangles, position, surfaceNormal, 0.13f, darkBlood, 18);
+        addDecalDisc(triangles, position + tangent * 0.055f + bitangent * 0.018f, surfaceNormal, 0.055f, freshBlood, 14);
+        addDecalDisc(triangles, position - tangent * 0.072f - bitangent * 0.028f, surfaceNormal, 0.036f, darkBlood * 0.72f, 12);
     }
 
     void addBulletMarks(std::vector<Vertex> &triangles) const
@@ -1476,7 +1573,9 @@ private:
                 addAnimalImpact(triangles, position, normal, glow);
                 continue;
             }
-            addDecalQuad(triangles, position, normal, 0.20f, {0.08f + glow * 0.92f, 0.02f + glow * 0.22f, 0.015f});
+            const Vec3 hotCore{0.10f + glow * 0.78f, 0.028f + glow * 0.16f, 0.012f};
+            addDecalDisc(triangles, position, normal, 0.115f, {0.055f, 0.045f, 0.035f}, 20);
+            addDecalDisc(triangles, position + normal * 0.006f, normal, 0.052f, hotCore, 16);
         }
     }
 };

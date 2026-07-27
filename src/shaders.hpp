@@ -72,44 +72,56 @@ void main() {
 
     N = normalize(N);
 
-    // Directional sunlight — warm golden light from upper-right
-    vec3 sunDir = normalize(vec3(0.48, 0.74, 0.32));
-    vec3 sunColor = vec3(1.12, 0.96, 0.78);
+    // Soft late-afternoon sunlight. Rounded geometry reads through broad,
+    // low-contrast highlights instead of the old hard polygon shading.
+    vec3 sunDir = normalize(vec3(0.44, 0.78, 0.31));
+    vec3 sunColor = vec3(1.10, 0.96, 0.82);
     float NdotL = max(dot(N, sunDir), 0.0);
-    vec3 diffuse = sunColor * NdotL * 0.72;
+    float wrappedDiffuse = clamp((NdotL + 0.16) / 1.16, 0.0, 1.0);
+    vec3 diffuse = sunColor * wrappedDiffuse * 0.68;
 
     // Hemisphere ambient: warm from above, cool from below
-    vec3 skyAmbient = vec3(0.32, 0.40, 0.55);   // cool blue-grey from sky
-    vec3 groundAmbient = vec3(0.12, 0.10, 0.06); // warm earth from below
+    vec3 skyAmbient = vec3(0.34, 0.43, 0.56);
+    vec3 groundAmbient = vec3(0.15, 0.12, 0.075);
     float hemi = N.y * 0.5 + 0.5;
     vec3 ambient = mix(groundAmbient, skyAmbient, hemi) * 0.62;
 
     // Secondary fill light from opposite side (subtle)
     vec3 fillDir = normalize(vec3(-0.3, 0.2, -0.5));
-    vec3 fillColor = vec3(0.18, 0.22, 0.32);
+    vec3 fillColor = vec3(0.20, 0.25, 0.34);
     float fillNdotL = max(dot(N, fillDir), 0.0);
     vec3 fill = fillColor * fillNdotL * 0.35;
 
-    // Blinn-Phong specular
+    // Wide, restrained highlights resemble rough painted metal, foliage and stone.
     vec3 viewDir = normalize(pc.cameraPos.xyz - fragWorldPos);
     vec3 halfDir = normalize(sunDir + viewDir);
-    float spec = pow(max(dot(N, halfDir), 0.0), 32.0);
-    vec3 specular = sunColor * spec * 0.18;
+    float spec = pow(max(dot(N, halfDir), 0.0), 20.0);
+    float fresnel = pow(1.0 - max(dot(N, viewDir), 0.0), 4.0);
+    vec3 specular = sunColor * spec * 0.13 + pc.fogColor.xyz * fresnel * 0.035;
 
     // Combine lighting
-    vec3 litColor = fragColor * (ambient + diffuse + fill) + specular;
+    float surfaceVariation =
+        sin(fragWorldPos.x * 6.7 + fragWorldPos.z * 2.1) *
+        sin(fragWorldPos.y * 8.3 - fragWorldPos.z * 4.9);
+    vec3 materialColor = fragColor * (1.0 + surfaceVariation * 0.022);
+    vec3 litColor = materialColor * (ambient + diffuse + fill) + specular;
 
     // Distance fog — blend toward sky color
     float dist = length(fragWorldPos - pc.cameraPos.xyz);
-    float fogStart = 55.0;
-    float fogEnd = 210.0;
+    float fogStart = 62.0;
+    float fogEnd = 205.0;
     float fogFactor = clamp((dist - fogStart) / (fogEnd - fogStart), 0.0, 1.0);
     fogFactor = fogFactor * fogFactor;  // Quadratic falloff for softer look
     vec3 finalColor = mix(litColor, pc.fogColor.xyz, fogFactor);
 
-    // Tone mapping — subtle, prevents harsh whites
-    finalColor = finalColor / (finalColor + vec3(0.8));
-    finalColor = pow(finalColor, vec3(1.0/1.8));  // Gamma-like brightening
+    // Filmic tone curve with gently rolled highlights and natural saturation.
+    finalColor *= 0.72;
+    finalColor = finalColor * (2.51 * finalColor + 0.03) /
+                 (finalColor * (2.43 * finalColor + 0.59) + 0.14);
+    finalColor = pow(clamp(finalColor, 0.0, 1.0), vec3(1.0 / 2.2));
+    float luminance = dot(finalColor, vec3(0.2126, 0.7152, 0.0722));
+    finalColor = mix(vec3(luminance), finalColor, 1.12);
+    finalColor = clamp((finalColor - 0.5) * 1.12 + 0.5, 0.0, 1.0);
 
     outColor = vec4(finalColor, 1.0);
 }

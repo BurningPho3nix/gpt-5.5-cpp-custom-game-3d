@@ -167,7 +167,7 @@ private:
         if (!SDL_Init(SDL_INIT_VIDEO)) {
             throw std::runtime_error(std::string("SDL_Init failed: ") + SDL_GetError());
         }
-        window = SDL_CreateWindow("Vulkan World Shooter", 1280, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
+        window = SDL_CreateWindow("Wildlands — Vulkan World Shooter", 1280, 720, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
         if (!window) {
             throw std::runtime_error(std::string("SDL_CreateWindow failed: ") + SDL_GetError());
         }
@@ -771,7 +771,7 @@ private:
         vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
         // Sky/fog color — used for both clear and fog blending
-        const float fogR = 0.52f, fogG = 0.68f, fogB = 0.82f;
+        const float fogR = 0.56f, fogG = 0.70f, fogB = 0.81f;
 
         std::array<VkClearValue, 2> clearValues{};
         clearValues[0].color = {{fogR, fogG, fogB, 1.0f}};
@@ -935,15 +935,13 @@ private:
 
         const float aspect = float(swapchainExtent.width) / float(std::max(1u, swapchainExtent.height));
         game.buildWorldMeshes(triangles, lines);
+        // Always build the reflected scene and let the mirror stencil define exact
+        // visibility. A corner-projected CPU scissor is not conservative when the
+        // mirror crosses the near plane, so it could drop the player at oblique or
+        // close viewing angles even though the mirror was still on screen.
         VkRect2D mirrorScissor{{0, 0}, swapchainExtent};
-        if (game.mirrorScreenRect(static_cast<int>(swapchainExtent.width), static_cast<int>(swapchainExtent.height), aspect, &mirrorScissor)) {
-            game.buildReflectionMeshes(reflectionTriangles, reflectionLines);
-            game.buildMirrorMask(mirrorMaskTriangles);
-        } else {
-            reflectionTriangles.clear();
-            reflectionLines.clear();
-            mirrorMaskTriangles.clear();
-        }
+        game.buildReflectionMeshes(reflectionTriangles, reflectionLines);
+        game.buildMirrorMask(mirrorMaskTriangles);
         game.buildMirrorMeshes(mirrorTriangles, mirrorLines);
         game.buildOverlay(overlayTriangles, overlayLines, aspect);
 
